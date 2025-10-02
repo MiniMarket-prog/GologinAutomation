@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Layers } from "lucide-react"
 
@@ -24,6 +25,9 @@ export function BulkTaskDialog() {
   const { profiles } = useProfiles(1, 1000)
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([])
   const [taskType, setTaskType] = useState("check_inbox")
+  const [actionCount, setActionCount] = useState(1)
+
+  const supportsMultipleActions = ["star_email", "read_email", "delete_email"].includes(taskType)
 
   const handleToggleProfile = (profileId: string) => {
     setSelectedProfiles((prev) =>
@@ -44,13 +48,15 @@ export function BulkTaskDialog() {
     setLoading(true)
 
     try {
+      const config = supportsMultipleActions ? { count: actionCount } : {}
+
       const response = await fetch("/api/tasks/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profile_ids: selectedProfiles,
           task_type: taskType,
-          config: {},
+          config,
         }),
       })
 
@@ -60,6 +66,7 @@ export function BulkTaskDialog() {
       alert(`Created ${data.count} tasks successfully!`)
       setOpen(false)
       setSelectedProfiles([])
+      setActionCount(1)
     } catch (error) {
       console.error("[v0] Error creating bulk tasks:", error)
       alert("Failed to create bulk tasks")
@@ -98,6 +105,27 @@ export function BulkTaskDialog() {
                 <option value="star_email">Star Email</option>
               </select>
             </div>
+
+            {supportsMultipleActions && (
+              <div className="space-y-2">
+                <Label htmlFor="bulk_action_count">Number of Actions</Label>
+                <Input
+                  id="bulk_action_count"
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={actionCount}
+                  onChange={(e) => setActionCount(Number.parseInt(e.target.value) || 1)}
+                  placeholder="How many emails to process"
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {taskType === "star_email" && "Number of emails to star per profile (starting from the top)"}
+                  {taskType === "read_email" && "Number of emails to read per profile (starting from the top)"}
+                  {taskType === "delete_email" && "Number of emails to delete per profile (starting from the top)"}
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">

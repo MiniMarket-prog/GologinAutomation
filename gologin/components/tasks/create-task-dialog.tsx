@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { Plus } from "lucide-react"
 
 export function CreateTaskDialog() {
@@ -28,15 +29,24 @@ export function CreateTaskDialog() {
     config: {},
   })
 
+  const [actionCount, setActionCount] = useState(1)
+
+  const supportsMultipleActions = ["star_email", "read_email", "delete_email"].includes(formData.task_type)
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
     try {
+      const config = supportsMultipleActions ? { ...formData.config, count: actionCount } : formData.config
+
       const response = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          config,
+        }),
       })
 
       if (!response.ok) {
@@ -46,6 +56,7 @@ export function CreateTaskDialog() {
 
       setOpen(false)
       setFormData({ profile_id: "", task_type: "login", config: {} })
+      setActionCount(1)
 
       window.location.reload()
     } catch (error) {
@@ -104,6 +115,27 @@ export function CreateTaskDialog() {
                 <option value="send_email">Send Email</option>
               </select>
             </div>
+
+            {supportsMultipleActions && (
+              <div className="space-y-2">
+                <Label htmlFor="action_count">Number of Actions</Label>
+                <Input
+                  id="action_count"
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={actionCount}
+                  onChange={(e) => setActionCount(Number.parseInt(e.target.value) || 1)}
+                  placeholder="How many emails to process"
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {formData.task_type === "star_email" && "Number of emails to star (starting from the top)"}
+                  {formData.task_type === "read_email" && "Number of emails to read (starting from the top)"}
+                  {formData.task_type === "delete_email" && "Number of emails to delete (starting from the top)"}
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>

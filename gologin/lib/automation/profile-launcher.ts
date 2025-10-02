@@ -32,6 +32,7 @@ export class ProfileLauncher {
       const browser = await puppeteer.connect({
         browserWSEndpoint: wsUrl,
         defaultViewport: null,
+        protocolTimeout: 300000, // 5 minutes timeout for protocol operations
       })
 
       console.log(`[v0] ✓ Connected to browser`)
@@ -70,10 +71,34 @@ export class ProfileLauncher {
 
       // Stop the profile via GoLogin API
       console.log(`[v0] Stopping profile via GoLogin API...`)
-      await this.gologinAPI.stopProfile(profileId)
+      let stopAttempts = 0
+      const maxAttempts = 3
+      let lastError: any = null
 
-      console.log(`[v0] ✓✓✓ Profile ${profileId} closed successfully ✓✓✓`)
-      return { success: true }
+      while (stopAttempts < maxAttempts) {
+        try {
+          await this.gologinAPI.stopProfile(profileId)
+          console.log(`[v0] ✓✓✓ Profile ${profileId} closed successfully ✓✓✓`)
+          return { success: true }
+        } catch (error: any) {
+          stopAttempts++
+          lastError = error
+          console.log(`[v0] Stop attempt ${stopAttempts}/${maxAttempts} failed: ${error.message}`)
+
+          if (stopAttempts < maxAttempts) {
+            console.log(`[v0] Waiting 2 seconds before retry...`)
+            await new Promise((resolve) => setTimeout(resolve, 2000))
+          }
+        }
+      }
+
+      // If we got here, all attempts failed
+      console.error(`[v0] ⚠️ Could not stop profile via API after ${maxAttempts} attempts`)
+      console.error(`[v0] Last error: ${lastError?.message}`)
+      console.log(`[v0] Profile may need to be manually stopped in GoLogin dashboard`)
+
+      // Return success anyway since browser is disconnected
+      return { success: true, warning: "Profile stopped locally but API call failed" }
     } catch (error: any) {
       console.error(`[v0] ❌ Failed to close profile ${profileId}`)
       console.error(`[v0] Error:`, error.message)

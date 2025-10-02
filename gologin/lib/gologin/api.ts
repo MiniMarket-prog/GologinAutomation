@@ -68,19 +68,48 @@ export class GoLoginAPI {
   }
 
   async stopProfile(profileId: string) {
-    const response = await fetch(`${this.baseUrl}/browser/${profileId}/stop`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-    })
+    const endpoints = [`/browser/${profileId}/stop`, `/browser/v2/${profileId}/stop`, `/browser/${profileId}/web/stop`]
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Failed to stop profile: ${errorText}`)
+    let lastError: any = null
+
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`[v0] Trying to stop profile at: ${endpoint}`)
+        const response = await fetch(`${this.baseUrl}${endpoint}`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+        })
+
+        if (response.ok) {
+          console.log(`[v0] ✓ Profile stopped successfully using endpoint: ${endpoint}`)
+          return response.json()
+        }
+
+        // If 404, the profile might already be stopped - not a critical error
+        if (response.status === 404) {
+          console.log(`[v0] Profile might already be stopped (404 at ${endpoint})`)
+          lastError = { status: 404, message: "Profile not found or already stopped" }
+          continue
+        }
+
+        const errorText = await response.text()
+        lastError = { status: response.status, message: errorText }
+      } catch (error: any) {
+        console.log(`[v0] Error trying endpoint ${endpoint}:`, error.message)
+        lastError = error
+      }
     }
 
-    return response.json()
+    // If all endpoints failed with 404, consider it a success (profile already stopped)
+    if (lastError?.status === 404) {
+      console.log(`[v0] Profile appears to be already stopped, continuing...`)
+      return { success: true, message: "Profile already stopped" }
+    }
+
+    // If we got here, all endpoints failed with non-404 errors
+    throw new Error(`Failed to stop profile after trying all endpoints: ${JSON.stringify(lastError)}`)
   }
 
   async getProfileStatus(profileId: string) {

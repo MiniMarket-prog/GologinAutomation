@@ -17,6 +17,9 @@ export class TaskExecutor {
     console.log(`[v0] Task ID: ${task.id}`)
     console.log(`[v0] Task Type: ${task.task_type}`)
     console.log(`[v0] Profile: ${profile.profile_name} (${profile.profile_id})`)
+    if (task.config?.count) {
+      console.log(`[v0] Action Count: ${task.config.count}`)
+    }
     console.log(`[v0] ========================================`)
 
     const startTime = Date.now()
@@ -57,15 +60,43 @@ export class TaskExecutor {
           break
 
         case "read_email":
-          const emailIndex = task.config?.emailIndex || 0
-          console.log(`[v0] Reading email at index: ${emailIndex}`)
-          result = await gmailAutomator.readEmail(emailIndex)
+          const readCount = task.config?.count || 1
+          console.log(`[v0] Reading ${readCount} email(s)...`)
+          const readResults = []
+          for (let i = 0; i < readCount; i++) {
+            console.log(`[v0] Reading email ${i + 1}/${readCount} at index ${i}`)
+            const readResult = await gmailAutomator.readEmail(i)
+            readResults.push(readResult)
+            if (!readResult.success) {
+              console.log(`[v0] Failed to read email ${i + 1}, stopping...`)
+              break
+            }
+          }
+          result = {
+            success: readResults.every((r) => r.success),
+            count: readResults.filter((r) => r.success).length,
+            results: readResults,
+          }
           break
 
         case "star_email":
-          const starIndex = task.config?.emailIndex || 0
-          console.log(`[v0] Starring email at index: ${starIndex}`)
-          result = await gmailAutomator.starEmail(starIndex)
+          const starCount = task.config?.count || 1
+          console.log(`[v0] Starring ${starCount} email(s)...`)
+          const starResults = []
+          for (let i = 0; i < starCount; i++) {
+            console.log(`[v0] Starring email ${i + 1}/${starCount} at index ${i}`)
+            const starResult = await gmailAutomator.starEmail(i)
+            starResults.push(starResult)
+            if (!starResult.success) {
+              console.log(`[v0] Failed to star email ${i + 1}, stopping...`)
+              break
+            }
+          }
+          result = {
+            success: starResults.every((r) => r.success),
+            count: starResults.filter((r) => r.success).length,
+            results: starResults,
+          }
           break
 
         case "send_email":

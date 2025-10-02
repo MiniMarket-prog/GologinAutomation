@@ -232,11 +232,9 @@ export class GmailAutomator {
       }
 
       if (emailRows.length === 0) {
-        // Take screenshot for debugging
         const screenshot = await this.page.screenshot({ encoding: "base64" })
         console.log("[v0] Screenshot captured for debugging (base64 length):", screenshot.length)
 
-        // Check if inbox is actually empty
         const isInboxEmpty = await this.page.evaluate(() => {
           const emptyMessage = document.querySelector('[aria-label*="No messages"]')
           return emptyMessage !== null
@@ -257,91 +255,65 @@ export class GmailAutomator {
         throw new Error(`Email index ${emailIndex} out of range (only ${emailRows.length} emails found)`)
       }
 
-      // Hover over email row
-      console.log(`[v0] Hovering over email ${emailIndex}...`)
-      await emailRows[emailIndex].hover()
-      await this.behavior.waitRandom(500)
-
-      console.log("[v0] Looking for star button...")
-
-      // Strategy 1: Original selector
-      let starButton = await emailRows[emailIndex].$('span[role="checkbox"][aria-label*="Star"]')
-
-      // Strategy 2: Try "Not starred" label (Gmail's default state)
-      if (!starButton) {
-        console.log("[v0] Trying 'Not starred' selector...")
-        starButton = await emailRows[emailIndex].$('span[role="checkbox"][aria-label*="Not starred"]')
-      }
-
-      // Strategy 3: Try by data-tooltip attribute
-      if (!starButton) {
-        console.log("[v0] Trying data-tooltip selector...")
-        starButton = await emailRows[emailIndex].$('span[data-tooltip*="Star"]')
-      }
-
-      // Strategy 4: Try finding by class pattern (Gmail uses T-KT for star buttons)
-      if (!starButton) {
-        console.log("[v0] Trying class pattern selector...")
-        starButton = await emailRows[emailIndex].$("span.T-KT")
-      }
-
-      // Strategy 5: Use page.evaluate to find star button within the row
-      if (!starButton) {
-        console.log("[v0] Trying evaluate strategy...")
-        const starButtonFound = await this.page.evaluate((index) => {
-          const rows = Array.from(document.querySelectorAll("tr.zA"))
-          const row = rows[index]
-          if (!row) return false
-
-          // Look for star-related elements
-          const starElements = row.querySelectorAll('[aria-label*="star" i], [data-tooltip*="star" i], .T-KT')
-          console.log(`[v0] Found ${starElements.length} potential star elements in row`)
-
-          if (starElements.length > 0) {
-            const starEl = starElements[0] as HTMLElement
-            starEl.click()
-            return true
-          }
-          return false
-        }, emailIndex)
-
-        if (starButtonFound) {
-          console.log("[v0] ✓ Star button clicked via evaluate")
-          await this.behavior.waitRandom(1000)
-          console.log("[v0] ✓✓✓ Email starred successfully ✓✓✓")
-          return { success: true }
-        }
-      }
-
-      if (!starButton) {
-        console.error("[v0] Star button not found - checking page structure...")
-
-        // Debug: Log all elements in the row
-        const rowDebugInfo = await this.page.evaluate((index) => {
-          const rows = Array.from(document.querySelectorAll("tr.zA"))
-          const row = rows[index]
-          if (!row) return "Row not found"
-
-          const allSpans = row.querySelectorAll("span")
-          const spanInfo = Array.from(allSpans).map((span) => ({
-            role: span.getAttribute("role"),
-            ariaLabel: span.getAttribute("aria-label"),
-            className: span.className,
-            dataTooltip: span.getAttribute("data-tooltip"),
-          }))
-
-          return JSON.stringify(spanInfo, null, 2)
-        }, emailIndex)
-
-        console.log("[v0] Row elements debug info:", rowDebugInfo)
-        throw new Error("Star button not found after trying all strategies")
-      }
-
-      console.log("[v0] ✓ Star button found")
-
+      console.log(`[v0] Finding and clicking star button for email ${emailIndex}...`)
       await this.behavior.randomPause()
-      console.log("[v0] Clicking star button...")
-      await starButton.click()
+
+      // Use page.evaluate to find and click the star button directly
+      const result = await this.page.evaluate((index) => {
+        const rows = Array.from(document.querySelectorAll("tr.zA"))
+        const row = rows[index]
+        if (!row) {
+          return { success: false, error: "Row not found in DOM" }
+        }
+
+        // Try multiple selectors in order of reliability
+        const selectors = [
+          'span[role="checkbox"][aria-label*="Not starred"]',
+          'span[role="checkbox"][aria-label*="Star"]',
+          'span[data-tooltip*="Star"]',
+          "span.T-KT", // Gmail's star button class
+          'div[data-tooltip*="Star"]',
+        ]
+
+        for (const selector of selectors) {
+          const starButton = row.querySelector(selector)
+          if (starButton) {
+            const element = starButton as HTMLElement
+            element.click()
+            return {
+              success: true,
+              selector: selector,
+              ariaLabel: starButton.getAttribute("aria-label") || "N/A",
+            }
+          }
+        }
+
+        // If no selector worked, log what we found
+        const allSpans = row.querySelectorAll("span[role='checkbox']")
+        const spanInfo = Array.from(allSpans).map((span) => ({
+          role: span.getAttribute("role"),
+          ariaLabel: span.getAttribute("aria-label"),
+          className: span.className,
+        }))
+
+        return {
+          success: false,
+          error: "Star button not found with any selector",
+          foundElements: spanInfo,
+        }
+      }, emailIndex)
+
+      console.log("[v0] Star button search result:", JSON.stringify(result, null, 2))
+
+      if (!result.success) {
+        // Take screenshot for debugging
+        const screenshot = await this.page.screenshot({ encoding: "base64" })
+        console.log("[v0] Screenshot captured for debugging (base64 length):", screenshot.length)
+
+        throw new Error(result.error || "Failed to click star button")
+      }
+
+      console.log(`[v0] ✓ Star button clicked using selector: ${result.selector}`)
       await this.behavior.waitRandom(1000)
 
       console.log("[v0] ✓✓✓ Email starred successfully ✓✓✓")

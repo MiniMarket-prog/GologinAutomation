@@ -26,28 +26,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Fetch profiles from GoLogin
+    // Fetch profiles and folders from GoLogin
     const gologinAPI = new GoLoginAPI(gologin_api_key)
-    const response = await gologinAPI.getProfiles()
-
-    console.log("[v0] GoLogin API response:", JSON.stringify(response).substring(0, 200))
-
-    // GoLogin API might return { profiles: [...] } or just [...]
-    let gologinProfiles: any[] = []
-
-    if (Array.isArray(response)) {
-      gologinProfiles = response
-    } else if (response && Array.isArray(response.profiles)) {
-      gologinProfiles = response.profiles
-    } else if (response && Array.isArray(response.data)) {
-      gologinProfiles = response.data
-    } else {
-      console.error("[v0] Unexpected GoLogin API response format:", response)
-      return NextResponse.json(
-        { error: "Unexpected response format from GoLogin API. Please check your API key." },
-        { status: 500 },
-      )
-    }
+    const [gologinProfiles, gologinFolders] = await Promise.all([gologinAPI.getProfiles(), gologinAPI.getFolders()])
 
     console.log(`[v0] Found ${gologinProfiles.length} profiles from GoLogin`)
 
@@ -55,41 +36,61 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         message: "No profiles found in your GoLogin account",
-        count: 0,
+        added: 0,
+        updated: 0,
+        total: 0,
       })
     }
 
-    // Get existing profiles
-    const { data: existingProfiles } = await supabase.from("gologin_profiles").select("profile_id")
+    const folderMap = new Map(gologinFolders.map((f: any) => [f.id, f.name || "Unnamed Folder"]))
 
-    const existingIds = new Set(existingProfiles?.map((p) => p.profile_id) || [])
+    console.log(`[v0] 📁 Folder Map:`, Array.from(folderMap.entries()))
+    console.log(
+      `[v0] 📋 Sample profile folders:`,
+      gologinProfiles.slice(0, 3).map((p) => ({ id: p.id, name: p.name, folders: p.folders })),
+    )
 
-    // Filter new profiles
-    const newProfiles = gologinProfiles
-      .filter((p: any) => !existingIds.has(p.id))
-      .map((p: any) => ({
+    const profilesToSync = gologinProfiles.map((p) => {
+      // The GoLogin API returns folder names in the folders array, not IDs
+      const folderName = p.folders && p.folders.length > 0 ? p.folders[0] : "No Folder"
+
+      if (p.folders && p.folders.length > 0) {
+        console.log(`[v0] Profile "${p.name}" has folders:`, p.folders, `→ using: "${folderName}"`)
+      }
+
+      return {
         profile_id: p.id,
         profile_name: p.name || `Profile ${p.id}`,
-        // Profiles will be unassigned when first synced, users can assign them later
-      }))
+        folder_name: folderName,
+      }
+    })
 
-    if (newProfiles.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: `All ${gologinProfiles.length} profiles already synced`,
-        count: 0,
+    const uniqueProfiles = Array.from(new Map(profilesToSync.map((p) => [p.profile_id, p])).values())
+
+    console.log(`[v0] Deduplicating: ${profilesToSync.length} profiles → ${uniqueProfiles.length} unique profiles`)
+
+    // Use upsert to insert new profiles or update existing ones
+    const { data: syncedProfiles, error: syncError } = await supabase
+      .from("gologin_profiles")
+      .upsert(uniqueProfiles, {
+        onConflict: "profile_id",
+        ignoreDuplicates: false,
       })
+      .select()
+
+    if (syncError) {
+      console.error("[v0] Error syncing profiles:", syncError)
+      return NextResponse.json({ error: `Failed to sync profiles: ${syncError.message}` }, { status: 500 })
     }
 
-    // Insert new profiles
-    const { data, error } = await supabase.from("gologin_profiles").insert(newProfiles).select()
-
-    if (error) throw error
+    const syncedCount = syncedProfiles?.length || 0
+    console.log(`[v0] Successfully synced ${syncedCount} profiles`)
 
     return NextResponse.json({
       success: true,
-      message: `Synced ${data.length} new profiles (${gologinProfiles.length} total in GoLogin)`,
-      count: data.length,
+      message: `Successfully synced ${syncedCount} profiles from GoLogin`,
+      synced: syncedCount,
+      total: gologinProfiles.length,
     })
   } catch (error: any) {
     console.error("[v0] Error syncing profiles:", error)

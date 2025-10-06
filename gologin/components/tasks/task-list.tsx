@@ -4,8 +4,9 @@ import { useState } from "react"
 import useSWR from "swr"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, AlertCircle } from "lucide-react"
+import { Trash2, AlertCircle, Search } from "lucide-react"
 import type { AutomationTask } from "@/lib/types"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
@@ -19,11 +20,17 @@ const statusColors = {
 
 export function TaskList() {
   const [filter, setFilter] = useState<string>("all")
-  const { data, isLoading, mutate } = useSWR(
-    filter === "all" ? "/api/tasks?limit=100" : `/api/tasks?status=${filter}&limit=100`,
-    fetcher,
-    { refreshInterval: 5000 },
-  )
+  const [search, setSearch] = useState("")
+
+  const buildUrl = () => {
+    const params = new URLSearchParams()
+    if (filter !== "all") params.append("status", filter)
+    params.append("limit", "100")
+    if (search) params.append("search", search)
+    return `/api/tasks?${params.toString()}`
+  }
+
+  const { data, isLoading, mutate } = useSWR(buildUrl(), fetcher, { refreshInterval: 5000 })
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this task?")) return
@@ -36,10 +43,22 @@ export function TaskList() {
     }
   }
 
-  const tasks = data?.tasks as (AutomationTask & { profile_name?: string })[] | undefined
+  const tasks = data?.tasks as (AutomationTask & { profile_name?: string; folder_name?: string })[] | undefined
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search by profile name or folder..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+      </div>
+
       <div className="flex gap-2">
         <Button variant={filter === "all" ? "default" : "outline"} size="sm" onClick={() => setFilter("all")}>
           All
@@ -68,6 +87,7 @@ export function TaskList() {
             <TableRow>
               <TableHead>Task Type</TableHead>
               <TableHead>Profile Name</TableHead>
+              <TableHead>Folder</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Scheduled</TableHead>
               <TableHead>Duration</TableHead>
@@ -77,7 +97,7 @@ export function TaskList() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   Loading tasks...
                 </TableCell>
               </TableRow>
@@ -86,6 +106,7 @@ export function TaskList() {
                 <TableRow key={task.id}>
                   <TableCell className="font-medium">{task.task_type}</TableCell>
                   <TableCell className="text-muted-foreground">{task.profile_name || "Unknown"}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm">{task.folder_name || "-"}</TableCell>
                   <TableCell>
                     <Badge className={statusColors[task.status]}>{task.status}</Badge>
                   </TableCell>
@@ -127,7 +148,7 @@ export function TaskList() {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   No tasks found
                 </TableCell>
               </TableRow>

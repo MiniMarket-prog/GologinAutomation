@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Search, Play, Pause, Trash2 } from "lucide-react"
+import { MoreHorizontal, Search, Play, Pause, Trash2, Folder } from "lucide-react"
+import { AddProfileDialog } from "@/components/profiles/add-profile-dialog"
+import { SyncProfilesDialog } from "@/components/profiles/sync-profiles-dialog"
 import type { GoLoginProfile } from "@/lib/types"
 
 const statusColors = {
@@ -54,27 +56,33 @@ export function ProfileTable() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search profiles by name or email..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4 flex-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search profiles by name or email..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <select
+            value={statusFilter || "all"}
+            onChange={(e) => setStatusFilter(e.target.value === "all" ? undefined : e.target.value)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            <option value="all">All Status</option>
+            <option value="idle">Idle</option>
+            <option value="running">Running</option>
+            <option value="paused">Paused</option>
+            <option value="error">Error</option>
+          </select>
         </div>
-        <select
-          value={statusFilter || "all"}
-          onChange={(e) => setStatusFilter(e.target.value === "all" ? undefined : e.target.value)}
-          className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-        >
-          <option value="all">All Status</option>
-          <option value="idle">Idle</option>
-          <option value="running">Running</option>
-          <option value="paused">Paused</option>
-          <option value="error">Error</option>
-        </select>
+        <div className="flex gap-2 ml-4">
+          <SyncProfilesDialog onSuccess={mutate} />
+          <AddProfileDialog />
+        </div>
       </div>
 
       <div className="rounded-md border">
@@ -82,6 +90,7 @@ export function ProfileTable() {
           <TableHeader>
             <TableRow>
               <TableHead>Profile Name</TableHead>
+              <TableHead>Folder</TableHead>
               <TableHead>Gmail Email</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last Run</TableHead>
@@ -91,7 +100,7 @@ export function ProfileTable() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   Loading profiles...
                 </TableCell>
               </TableRow>
@@ -99,6 +108,16 @@ export function ProfileTable() {
               profiles.map((profile) => (
                 <TableRow key={profile.id}>
                   <TableCell className="font-medium">{profile.profile_name}</TableCell>
+                  <TableCell>
+                    {profile.folder_name ? (
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Folder className="h-3.5 w-3.5" />
+                        <span className="text-sm">{profile.folder_name}</span>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
                   <TableCell>{profile.gmail_email || "-"}</TableCell>
                   <TableCell>
                     <Badge className={statusColors[profile.status]}>{profile.status}</Badge>
@@ -135,7 +154,7 @@ export function ProfileTable() {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   No profiles found
                 </TableCell>
               </TableRow>

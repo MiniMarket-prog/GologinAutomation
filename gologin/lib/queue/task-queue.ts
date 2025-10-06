@@ -64,9 +64,15 @@ export class TaskQueue {
       }
       console.log("[v0] ✓ Behavior pattern loaded")
 
+      console.log("[v0] Fetching GoLogin mode setting...")
+      const { data: modeSetting } = await supabase.from("settings").select("value").eq("key", "gologin_mode").single()
+
+      const mode = (modeSetting?.value || "cloud") as "cloud" | "local"
+      console.log(`[v0] ✓ GoLogin mode: ${mode}`)
+
       // Process each task
       for (const task of tasks) {
-        await this.processTask(task, behaviorPattern)
+        await this.processTask(task, behaviorPattern, mode)
       }
 
       console.log("[v0] ========================================")
@@ -82,7 +88,7 @@ export class TaskQueue {
     }
   }
 
-  private async processTask(task: AutomationTask, behaviorPattern: BehaviorPattern) {
+  private async processTask(task: AutomationTask, behaviorPattern: BehaviorPattern, mode: "cloud" | "local") {
     console.log(`[v0] ========================================`)
     console.log(`[v0] Processing task ${task.id}`)
     console.log(`[v0] Task type: ${task.task_type}`)
@@ -129,7 +135,7 @@ export class TaskQueue {
 
       // Execute task
       console.log("[v0] Executing task...")
-      const executor = new TaskExecutor(this.gologinApiKey, behaviorPattern.config)
+      const executor = new TaskExecutor(this.gologinApiKey, mode, behaviorPattern.config)
       const result = await executor.executeTask(task, profile)
 
       console.log(`[v0] Task execution result:`, {

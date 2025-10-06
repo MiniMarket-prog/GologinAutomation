@@ -1,13 +1,21 @@
-import { ProfileLauncher } from "./profile-launcher"
+import { ProfileLauncher, type LaunchMode } from "./profile-launcher"
 import { GmailAutomator } from "./gmail-automator"
 import type { AutomationTask, BehaviorPattern, GoLoginProfile } from "@/lib/types"
+
+import { handleLogin } from "./tasks/login-handler"
+import { handleCheckInbox } from "./tasks/check-inbox-handler"
+import { handleReadEmail } from "./tasks/read-email-handler"
+import { handleStarEmail } from "./tasks/star-email-handler"
+import { handleSendEmail } from "./tasks/send-email-handler"
+import { handleReplyToEmail } from "./tasks/reply-email-handler"
+import { handleReportToInbox } from "./tasks/report-to-inbox-handler"
 
 export class TaskExecutor {
   private launcher: ProfileLauncher
   private behaviorPattern: BehaviorPattern["config"]
 
-  constructor(gologinApiKey: string, behaviorPattern: BehaviorPattern["config"]) {
-    this.launcher = new ProfileLauncher(gologinApiKey)
+  constructor(gologinApiKey: string, mode: LaunchMode, behaviorPattern: BehaviorPattern["config"]) {
+    this.launcher = new ProfileLauncher(gologinApiKey, mode)
     this.behaviorPattern = behaviorPattern
   }
 
@@ -24,87 +32,54 @@ export class TaskExecutor {
 
     const startTime = Date.now()
     let result: any = { success: false }
+    let browser: any = null
 
     try {
-      // Launch the profile
       console.log(`[v0] Step 1: Launching profile...`)
-      const { browser, page, success, error } = await this.launcher.launchProfile(profile.profile_id)
+      const launchResult = await this.launcher.launchProfile(profile.profile_id)
+      browser = launchResult.browser
+      const page = launchResult.page
 
-      if (!success || !browser || !page) {
-        const errorMsg = error || "Failed to launch profile"
+      if (!launchResult.success || !browser || !page) {
+        const errorMsg = launchResult.error || "Failed to launch profile"
         console.error(`[v0] ❌ Profile launch failed: ${errorMsg}`)
         throw new Error(errorMsg)
       }
 
       console.log(`[v0] ✓ Profile launched successfully`)
 
-      // Create Gmail automator
       console.log(`[v0] Step 2: Initializing Gmail automator...`)
       const gmailAutomator = new GmailAutomator(page, this.behaviorPattern)
       console.log(`[v0] ✓ Gmail automator ready`)
 
-      // Execute task based on type
       console.log(`[v0] Step 3: Executing task type: ${task.task_type}`)
       switch (task.task_type) {
         case "login":
-          if (!profile.gmail_email || !profile.gmail_password) {
-            throw new Error("Gmail credentials not configured for this profile")
-          }
-          console.log(`[v0] Logging in with email: ${profile.gmail_email}`)
-          result = await gmailAutomator.login(profile.gmail_email, profile.gmail_password)
+          result = await handleLogin(gmailAutomator, page, task.config)
           break
 
         case "check_inbox":
-          console.log(`[v0] Checking inbox...`)
-          result = await gmailAutomator.checkInbox()
+          result = await handleCheckInbox(gmailAutomator, page)
           break
 
         case "read_email":
-          const readCount = task.config?.count || 1
-          console.log(`[v0] Reading ${readCount} email(s)...`)
-          const readResults = []
-          for (let i = 0; i < readCount; i++) {
-            console.log(`[v0] Reading email ${i + 1}/${readCount} at index ${i}`)
-            const readResult = await gmailAutomator.readEmail(i)
-            readResults.push(readResult)
-            if (!readResult.success) {
-              console.log(`[v0] Failed to read email ${i + 1}, stopping...`)
-              break
-            }
-          }
-          result = {
-            success: readResults.every((r) => r.success),
-            count: readResults.filter((r) => r.success).length,
-            results: readResults,
-          }
+          result = await handleReadEmail(gmailAutomator, page, task.config)
           break
 
         case "star_email":
-          const starCount = task.config?.count || 1
-          console.log(`[v0] Starring ${starCount} email(s)...`)
-          const starResults = []
-          for (let i = 0; i < starCount; i++) {
-            console.log(`[v0] Starring email ${i + 1}/${starCount} at index ${i}`)
-            const starResult = await gmailAutomator.starEmail(i)
-            starResults.push(starResult)
-            if (!starResult.success) {
-              console.log(`[v0] Failed to star email ${i + 1}, stopping...`)
-              break
-            }
-          }
-          result = {
-            success: starResults.every((r) => r.success),
-            count: starResults.filter((r) => r.success).length,
-            results: starResults,
-          }
+          result = await handleStarEmail(gmailAutomator, page, task.config)
           break
 
         case "send_email":
-          if (!task.config?.to || !task.config?.subject || !task.config?.body) {
-            throw new Error("Email configuration incomplete (missing to, subject, or body)")
-          }
-          console.log(`[v0] Sending email to: ${task.config.to}`)
-          result = await gmailAutomator.sendEmail(task.config.to, task.config.subject, task.config.body)
+          result = await handleSendEmail(gmailAutomator, page, task.config)
+          break
+
+        case "reply_to_email":
+          result = await handleReplyToEmail(gmailAutomator, page, task.config)
+          break
+
+        case "report_to_inbox":
+          result = await handleReportToInbox(gmailAutomator, page, task.config)
           break
 
         default:
@@ -112,11 +87,6 @@ export class TaskExecutor {
       }
 
       console.log(`[v0] ✓ Task execution result:`, result)
-
-      // Close the profile
-      console.log(`[v0] Step 4: Closing profile...`)
-      await this.launcher.closeProfile(profile.profile_id, browser)
-      console.log(`[v0] ✓ Profile closed`)
 
       const duration = Date.now() - startTime
 
@@ -143,6 +113,16 @@ export class TaskExecutor {
         success: false,
         duration,
         error: error.message,
+      }
+    } finally {
+      if (browser) {
+        console.log(`[v0] Step 4: Closing profile...`)
+        try {
+          await this.launcher.closeProfile(profile.profile_id, browser)
+          console.log(`[v0] ✓ Profile closed`)
+        } catch (closeError: any) {
+          console.error(`[v0] ⚠️ Error during profile cleanup: ${closeError.message}`)
+        }
       }
     }
   }

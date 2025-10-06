@@ -14,29 +14,108 @@ export class GoLoginAPI {
 
   async getProfiles() {
     try {
-      const profilesUrl = `${this.baseUrl}/browser/v2`
-      console.log(`[v0] Fetching profiles from ${profilesUrl}`)
+      console.log(`[v0] Fetching profiles using page-based pagination`)
 
-      const response = await fetch(profilesUrl, {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      })
+      const allProfiles: any[] = []
+      let page = 1
+      let hasMore = true
+      let totalCount: number | null = null
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`GoLogin API error (${response.status}): ${errorText}`)
+      while (hasMore) {
+        // Try different pagination approaches
+        const urls = [
+          `${this.baseUrl}/browser/v2?page=${page}`,
+          `${this.baseUrl}/browser/v2?skip=${(page - 1) * 30}&limit=30`,
+          `${this.baseUrl}/browser?page=${page}`,
+        ]
+
+        let profiles: any[] = []
+        let success = false
+
+        for (const url of urls) {
+          try {
+            console.log(`[v0] Trying: ${url}`)
+            const response = await fetch(url, {
+              headers: {
+                Authorization: `Bearer ${this.apiKey}`,
+              },
+            })
+
+            if (!response.ok) continue
+
+            const data = await response.json()
+
+            if (data.allProfilesCount !== undefined) {
+              totalCount = data.allProfilesCount
+            } else if (data.total !== undefined) {
+              totalCount = data.total
+            }
+
+            if (Array.isArray(data)) {
+              profiles = data
+            } else if (data.profiles && Array.isArray(data.profiles)) {
+              profiles = data.profiles
+            } else if (data.data && Array.isArray(data.data)) {
+              profiles = data.data
+            }
+
+            if (profiles.length > 0) {
+              console.log(`[v0] ✓ Success with ${url} - got ${profiles.length} profiles`)
+              success = true
+              break
+            }
+          } catch (error) {
+            continue
+          }
+        }
+
+        if (!success || profiles.length === 0) {
+          console.log(`[v0] No more profiles found at page ${page}`)
+          hasMore = false
+          break
+        }
+
+        if (page === 1 && totalCount !== null) {
+          console.log(`[v0] Total profiles reported: ${totalCount}`)
+        }
+
+        if (page === 1 && profiles.length > 0) {
+          console.log(`[v0] Sample profile structure:`, JSON.stringify(profiles[0], null, 2))
+        }
+
+        // Check for duplicates before adding
+        const existingIds = new Set(allProfiles.map((p) => p.id))
+        const newProfiles = profiles.filter((p) => !existingIds.has(p.id))
+
+        console.log(
+          `[v0] Page ${page}: ${profiles.length} profiles, ${newProfiles.length} new (${profiles.length - newProfiles.length} duplicates)`,
+        )
+
+        if (newProfiles.length === 0) {
+          console.log(`[v0] All profiles on page ${page} are duplicates - stopping`)
+          hasMore = false
+          break
+        }
+
+        allProfiles.push(...newProfiles)
+        page++
+
+        if (totalCount !== null && allProfiles.length >= totalCount) {
+          console.log(`[v0] Reached total count of ${totalCount}`)
+          hasMore = false
+        }
+
+        // Safety limit
+        if (page > 20) {
+          console.log(`[v0] Reached page limit of 20`)
+          hasMore = false
+        }
       }
 
-      const data = await response.json()
-      this.successfulEndpoint = profilesUrl
+      console.log(`[v0] ✓ Fetched ${allProfiles.length} unique profiles`)
+      this.successfulEndpoint = `${this.baseUrl}/browser/v2`
 
-      if (Array.isArray(data)) return data
-      if (data.profiles && Array.isArray(data.profiles)) return data.profiles
-      if (data.data && Array.isArray(data.data)) return data.data
-
-      console.log(`[v0] Unexpected response structure:`, data)
-      return []
+      return allProfiles
     } catch (error: any) {
       console.error("[v0] Failed to fetch profiles:", error.message)
       throw new Error(
@@ -47,7 +126,7 @@ export class GoLoginAPI {
   }
 
   async startProfile(profileId: string) {
-    console.log(`[v0] Starting profile ${profileId}...`)
+    console.log(`[v0] Starting profile ${profileId} in cloud mode...`)
 
     const response = await fetch(`${this.baseUrl}/browser/${profileId}/web`, {
       method: "POST",
@@ -125,6 +204,36 @@ export class GoLoginAPI {
     }
 
     return response.json()
+  }
+
+  async getFolders() {
+    try {
+      const foldersUrl = `${this.baseUrl}/folders`
+      console.log(`[v0] Fetching folders from ${foldersUrl}`)
+
+      const response = await fetch(foldersUrl, {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`GoLogin API error (${response.status}): ${errorText}`)
+      }
+
+      const data = await response.json()
+
+      // The API returns an array of folders or an object with folders property
+      const folders = Array.isArray(data) ? data : data.folders || []
+      console.log(`[v0] ✓ Fetched ${folders.length} folders from GoLogin`)
+
+      return folders
+    } catch (error: any) {
+      console.error("[v0] Failed to fetch folders:", error.message)
+      // Don't throw - folders are optional, return empty array
+      return []
+    }
   }
 }
 

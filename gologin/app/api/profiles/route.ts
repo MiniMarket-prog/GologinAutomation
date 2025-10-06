@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     }
 
     if (search) {
-      query = query.or(`profile_name.ilike.%${search}%,gmail_email.ilike.%${search}%`)
+      query = query.or(`profile_name.ilike.%${search}%,gmail_email.ilike.%${search}%,folder_name.ilike.%${search}%`)
     }
 
     const { data, error, count } = await query

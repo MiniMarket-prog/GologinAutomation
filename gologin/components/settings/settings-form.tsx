@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 export function SettingsForm() {
   const [apiKey, setApiKey] = useState("")
+  const [mode, setMode] = useState<"cloud" | "local">("cloud")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
@@ -15,11 +17,19 @@ export function SettingsForm() {
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        const response = await fetch("/api/settings?key=gologin_api_key")
+        const [apiKeyResponse, modeResponse] = await Promise.all([
+          fetch("/api/settings?key=gologin_api_key"),
+          fetch("/api/settings?key=gologin_mode"),
+        ])
 
-        if (response.ok) {
-          const data = await response.json()
+        if (apiKeyResponse.ok) {
+          const data = await apiKeyResponse.json()
           setApiKey(data.value || "")
+        }
+
+        if (modeResponse.ok) {
+          const data = await modeResponse.json()
+          setMode((data.value as "cloud" | "local") || "cloud")
         }
       } catch (error) {
         console.error("Error loading settings:", error)
@@ -42,26 +52,34 @@ export function SettingsForm() {
 
     setSaving(true)
     try {
-      const payload = {
-        key: "gologin_api_key",
-        value: apiKey,
-      }
+      const [apiKeyResponse, modeResponse] = await Promise.all([
+        fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: "gologin_api_key",
+            value: apiKey,
+          }),
+        }),
+        fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: "gologin_mode",
+            value: mode,
+          }),
+        }),
+      ])
 
-      const response = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-
-      const responseData = await response.json()
-
-      if (!response.ok) {
-        throw new Error(responseData.error || "Failed to save settings")
+      if (!apiKeyResponse.ok || !modeResponse.ok) {
+        const apiKeyData = await apiKeyResponse.json()
+        const modeData = await modeResponse.json()
+        throw new Error(apiKeyData.error || modeData.error || "Failed to save settings")
       }
 
       toast({
         title: "Settings saved",
-        description: "Your GoLogin API key has been saved successfully.",
+        description: "Your GoLogin settings have been saved successfully.",
       })
     } catch (error) {
       console.error("Error saving settings:", error)
@@ -94,6 +112,25 @@ export function SettingsForm() {
           This key is stored securely in the database and used to connect to GoLogin profiles
         </p>
       </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="mode">Connection Mode</Label>
+        <Select value={mode} onValueChange={(value) => setMode(value as "cloud" | "local")}>
+          <SelectTrigger id="mode">
+            <SelectValue placeholder="Select mode" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="cloud">Cloud (Remote Browser)</SelectItem>
+            <SelectItem value="local">Local (Desktop App)</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          {mode === "cloud"
+            ? "Browser runs on GoLogin's servers (no local installation needed)"
+            : "Browser runs on your machine (requires GoLogin Desktop app installed and running)"}
+        </p>
+      </div>
+
       <Button onClick={handleSave} disabled={saving}>
         {saving ? "Saving..." : "Save Settings"}
       </Button>

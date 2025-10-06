@@ -1,34 +1,64 @@
 import puppeteer from "puppeteer-core"
 import { GoLoginAPI } from "@/lib/gologin/api"
 
+export type LaunchMode = "cloud" | "local"
+
 export class ProfileLauncher {
   private gologinAPI: GoLoginAPI
   private apiKey: string
+  private mode: LaunchMode
+  private gologinInstance: any = null
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, mode: LaunchMode = "cloud") {
     this.gologinAPI = new GoLoginAPI(apiKey)
     this.apiKey = apiKey
+    this.mode = mode
   }
 
   async launchProfile(profileId: string) {
     console.log(`[v0] ========================================`)
     console.log(`[v0] Launching GoLogin profile: ${profileId}`)
+    console.log(`[v0] Mode: ${this.mode.toUpperCase()}`)
     console.log(`[v0] ========================================`)
 
     try {
-      // Start the profile via GoLogin API
-      console.log(`[v0] Step 1: Starting profile via GoLogin API...`)
-      const profileData = await this.gologinAPI.startProfile(profileId)
+      let wsUrl: string
 
-      console.log(`[v0] ✓ Profile data received:`, JSON.stringify(profileData, null, 2))
+      if (this.mode === "local") {
+        console.log(`[v0] Step 1: Starting profile locally using GoLogin SDK...`)
 
-      // GoLogin cloud browser uses a specific connect URL format
-      const wsUrl = `https://cloudbrowser.gologin.com/connect?token=${this.apiKey}&profile=${profileId}`
+        try {
+          const { GologinApi } = await import("gologin")
+
+          this.gologinInstance = GologinApi({
+            token: this.apiKey,
+          })
+
+          console.log(`[v0] Launching local profile...`)
+          const { browser: localBrowser } = await this.gologinInstance.launch({ profileId })
+          wsUrl = localBrowser.wsEndpoint()
+
+          console.log(`[v0] ✓ Local profile launched`)
+          console.log(`[v0] Using LOCAL mode - connecting to local Orbita browser`)
+        } catch (importError: any) {
+          console.error(`[v0] ❌ Failed to load GoLogin SDK for local mode`)
+          console.error(`[v0] Error: ${importError.message}`)
+          console.error(`[v0] Local mode requires running in a Node.js environment with GoLogin Desktop app installed`)
+          throw new Error(
+            "Local mode is not available in this environment. Please use Cloud mode or run the application locally with Node.js.",
+          )
+        }
+      } else {
+        console.log(`[v0] Step 1: Starting profile via GoLogin API...`)
+        await this.gologinAPI.startProfile(profileId)
+
+        wsUrl = `wss://cloudbrowser.gologin.com/connect?token=${this.apiKey}&profile=${profileId}`
+        console.log(`[v0] Using CLOUD mode - connecting to GoLogin cloud browser`)
+      }
 
       console.log(`[v0] Step 2: Connecting to WebSocket...`)
       console.log(`[v0] WebSocket URL: ${wsUrl.replace(this.apiKey, "***API_KEY***")}`)
 
-      // Connect to the browser via WebSocket
       const browser = await puppeteer.connect({
         browserWSEndpoint: wsUrl,
         defaultViewport: null,
@@ -37,14 +67,13 @@ export class ProfileLauncher {
 
       console.log(`[v0] ✓ Connected to browser`)
 
-      // Get the first page
       console.log(`[v0] Step 3: Getting browser page...`)
       const pages = await browser.pages()
       console.log(`[v0] Found ${pages.length} open pages`)
       const page = pages[0] || (await browser.newPage())
 
       console.log(`[v0] ========================================`)
-      console.log(`[v0] ✓✓✓ Profile ${profileId} launched successfully ✓✓✓`)
+      console.log(`[v0] ✓✓✓ Profile ${profileId} launched successfully in ${this.mode.toUpperCase()} mode ✓✓✓`)
       console.log(`[v0] ========================================`)
 
       return { browser, page, success: true }
@@ -64,41 +93,44 @@ export class ProfileLauncher {
 
     try {
       if (browser) {
-        console.log(`[v0] Disconnecting browser...`)
-        await browser.disconnect()
-        console.log(`[v0] ✓ Browser disconnected`)
+        console.log(`[v0] Closing browser...`)
+        await browser.close()
+        console.log(`[v0] ✓ Browser closed`)
       }
 
-      // Stop the profile via GoLogin API
-      console.log(`[v0] Stopping profile via GoLogin API...`)
-      let stopAttempts = 0
-      const maxAttempts = 3
-      let lastError: any = null
+      if (this.mode === "cloud") {
+        console.log(`[v0] Stopping profile via GoLogin API...`)
+        let stopAttempts = 0
+        const maxAttempts = 3
+        let lastError: any = null
 
-      while (stopAttempts < maxAttempts) {
-        try {
-          await this.gologinAPI.stopProfile(profileId)
-          console.log(`[v0] ✓✓✓ Profile ${profileId} closed successfully ✓✓✓`)
-          return { success: true }
-        } catch (error: any) {
-          stopAttempts++
-          lastError = error
-          console.log(`[v0] Stop attempt ${stopAttempts}/${maxAttempts} failed: ${error.message}`)
+        while (stopAttempts < maxAttempts) {
+          try {
+            await this.gologinAPI.stopProfile(profileId)
+            console.log(`[v0] ✓✓✓ Profile ${profileId} closed successfully ✓✓✓`)
+            break
+          } catch (error: any) {
+            stopAttempts++
+            lastError = error
+            console.log(`[v0] Stop attempt ${stopAttempts}/${maxAttempts} failed: ${error.message}`)
 
-          if (stopAttempts < maxAttempts) {
-            console.log(`[v0] Waiting 2 seconds before retry...`)
-            await new Promise((resolve) => setTimeout(resolve, 2000))
+            if (stopAttempts < maxAttempts) {
+              console.log(`[v0] Waiting 2 seconds before retry...`)
+              await new Promise((resolve) => setTimeout(resolve, 2000))
+            }
           }
         }
+
+        if (stopAttempts === maxAttempts) {
+          console.error(`[v0] ⚠️ Could not stop profile via API after ${maxAttempts} attempts`)
+          console.error(`[v0] Last error: ${lastError?.message}`)
+          console.log(`[v0] Profile may need to be manually stopped in GoLogin dashboard`)
+        }
+      } else {
+        console.log(`[v0] ✓ Profile closed`)
       }
 
-      // If we got here, all attempts failed
-      console.error(`[v0] ⚠️ Could not stop profile via API after ${maxAttempts} attempts`)
-      console.error(`[v0] Last error: ${lastError?.message}`)
-      console.log(`[v0] Profile may need to be manually stopped in GoLogin dashboard`)
-
-      // Return success anyway since browser is disconnected
-      return { success: true, warning: "Profile stopped locally but API call failed" }
+      return { success: true }
     } catch (error: any) {
       console.error(`[v0] ❌ Failed to close profile ${profileId}`)
       console.error(`[v0] Error:`, error.message)

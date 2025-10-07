@@ -2,9 +2,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Activity, CheckCircle2, Clock, Users } from "lucide-react"
 
 async function getStats() {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/profiles/stats`, {
+  const baseUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    (typeof window === "undefined" ? `http://localhost:${process.env.PORT || 3000}` : "")
+
+  const response = await fetch(`${baseUrl}/api/profiles/stats`, {
     cache: "no-store",
   })
+
+  if (!response.ok) {
+    console.error("[v0] Failed to fetch stats:", response.status)
+    return { total: 0, byStatus: {}, activeTasks: 0, recentActivity: 0 }
+  }
+
   return response.json()
 }
 

@@ -13,6 +13,9 @@ export interface GoLoginProfile {
   folder_name?: string | null
   gmail_email: string | null
   gmail_password: string | null
+  gmail_status?: "ok" | "blocked" | "password_required" | "verification_required" | "error" | "unknown" | null
+  gmail_status_checked_at?: string | null
+  gmail_status_message?: string | null
   status: "idle" | "running" | "paused" | "error"
   last_run: string | null
   assigned_user_id: string | null
@@ -23,7 +26,15 @@ export interface GoLoginProfile {
 export interface AutomationTask {
   id: string
   profile_id: string
-  task_type: "login" | "check_inbox" | "read_email" | "send_email" | "star_email" | "reply_to_email" | "report_to_inbox"
+  task_type:
+    | "login"
+    | "check_inbox"
+    | "read_email"
+    | "send_email"
+    | "star_email"
+    | "reply_to_email"
+    | "report_to_inbox"
+    | "check_gmail_status"
   status: "pending" | "running" | "completed" | "failed"
   priority: number
   config: Record<string, any>

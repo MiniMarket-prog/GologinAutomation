@@ -144,6 +144,42 @@ export class TaskQueue {
         error: result.error || "none",
       })
 
+      console.log("[v0] [DEBUG] Checking if task is check_gmail_status...")
+      console.log("[v0] [DEBUG] Task type:", task.task_type)
+      console.log("[v0] [DEBUG] Result object:", JSON.stringify(result, null, 2))
+
+      if (task.task_type === "check_gmail_status" && result.result) {
+        console.log("[v0] [DEBUG] Gmail status check detected, preparing profile update...")
+        console.log("[v0] [DEBUG] Result.result:", JSON.stringify(result.result, null, 2))
+
+        const gmailStatus = result.result.status
+        const gmailMessage = result.result.message
+
+        console.log("[v0] [DEBUG] Updating profile with Gmail status:", {
+          gmail_status: gmailStatus,
+          gmail_status_checked_at: new Date().toISOString(),
+          gmail_status_message: gmailMessage,
+        })
+
+        const { data: updateData, error: updateError } = await supabase
+          .from("gologin_profiles")
+          .update({
+            gmail_status: gmailStatus,
+            gmail_status_checked_at: new Date().toISOString(),
+            gmail_status_message: gmailMessage,
+          })
+          .eq("id", profile.id)
+          .select()
+
+        if (updateError) {
+          console.error("[v0] [DEBUG] ❌ Error updating Gmail status:", updateError)
+        } else {
+          console.log("[v0] [DEBUG] ✓ Gmail status updated successfully:", updateData)
+        }
+      } else {
+        console.log("[v0] [DEBUG] Not a Gmail status check task or no result data")
+      }
+
       // Update task status
       console.log("[v0] Updating task final status...")
       await supabase

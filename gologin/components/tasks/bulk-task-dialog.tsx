@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useProfiles } from "@/lib/hooks/use-profiles"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,7 +17,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Layers } from "lucide-react"
+import { Layers, Folder } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
 
 export function BulkTaskDialog() {
@@ -36,8 +36,21 @@ export function BulkTaskDialog() {
   const [useRandomDuration, setUseRandomDuration] = useState(true)
   const [sequentialMode, setSequentialMode] = useState(false)
   const [waitForManualClose, setWaitForManualClose] = useState(false)
+  const [selectedFolder, setSelectedFolder] = useState<string>("all")
 
   const supportsMultipleActions = ["star_email", "read_email", "delete_email", "reply_to_email"].includes(taskType)
+
+  const folders = useMemo(() => {
+    if (!profiles) return []
+    const uniqueFolders = new Set(profiles.map((p) => p.folder_name || "No Folder"))
+    return Array.from(uniqueFolders).sort()
+  }, [profiles])
+
+  const filteredProfiles = useMemo(() => {
+    if (!profiles) return []
+    if (selectedFolder === "all") return profiles
+    return profiles.filter((p) => (p.folder_name || "No Folder") === selectedFolder)
+  }, [profiles, selectedFolder])
 
   const handleToggleProfile = (profileId: string) => {
     setSelectedProfiles((prev) =>
@@ -46,10 +59,10 @@ export function BulkTaskDialog() {
   }
 
   const handleSelectAll = () => {
-    if (selectedProfiles.length === profiles?.length) {
+    if (selectedProfiles.length === filteredProfiles?.length) {
       setSelectedProfiles([])
     } else {
-      setSelectedProfiles(profiles?.map((p) => p.id) || [])
+      setSelectedProfiles(filteredProfiles?.map((p) => p.id) || [])
     }
   }
 
@@ -159,6 +172,7 @@ export function BulkTaskDialog() {
                 required
               >
                 <option value="login">Login to Gmail</option>
+                <option value="check_gmail_status">Check Gmail Status</option>
                 <option value="check_inbox">Check Inbox</option>
                 <option value="read_email">Read Email</option>
                 <option value="star_email">Star Email</option>
@@ -350,14 +364,40 @@ export function BulkTaskDialog() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="folder_filter">
+                <Folder className="inline-block mr-2 h-4 w-4" />
+                Filter by Folder
+              </Label>
+              <select
+                id="folder_filter"
+                value={selectedFolder}
+                onChange={(e) => {
+                  setSelectedFolder(e.target.value)
+                  setSelectedProfiles([]) // Clear selection when changing folder
+                }}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="all">All Folders ({profiles?.length || 0} profiles)</option>
+                {folders.map((folder) => (
+                  <option key={folder} value={folder}>
+                    {folder} ({profiles?.filter((p) => (p.folder_name || "No Folder") === folder).length || 0} profiles)
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Filter profiles by folder to easily select profiles from specific teams or groups
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Select Profiles ({selectedProfiles.length} selected)</Label>
                 <Button type="button" variant="outline" size="sm" onClick={handleSelectAll}>
-                  {selectedProfiles.length === profiles?.length ? "Deselect All" : "Select All"}
+                  {selectedProfiles.length === filteredProfiles?.length ? "Deselect All" : "Select All"}
                 </Button>
               </div>
               <div className="max-h-64 space-y-2 overflow-y-auto rounded-md border border-input p-4">
-                {profiles?.map((profile) => (
+                {filteredProfiles?.map((profile) => (
                   <div key={profile.id} className="flex items-center space-x-2">
                     <Checkbox
                       id={profile.id}
@@ -369,9 +409,15 @@ export function BulkTaskDialog() {
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
                       {profile.profile_name} {profile.gmail_email && `(${profile.gmail_email})`}
+                      {profile.folder_name && (
+                        <span className="ml-2 text-xs text-muted-foreground">({profile.folder_name})</span>
+                      )}
                     </label>
                   </div>
                 ))}
+                {filteredProfiles?.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No profiles in this folder</p>
+                )}
               </div>
             </div>
           </div>

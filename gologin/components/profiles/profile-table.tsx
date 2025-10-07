@@ -1,13 +1,26 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useProfiles } from "@/lib/hooks/use-profiles"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Search, Play, Pause, Trash2, Folder } from "lucide-react"
+import {
+  MoreHorizontal,
+  Search,
+  Play,
+  Pause,
+  Trash2,
+  Folder,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  HelpCircle,
+  Clock,
+  ExternalLink,
+} from "lucide-react"
 import { AddProfileDialog } from "@/components/profiles/add-profile-dialog"
 import { SyncProfilesDialog } from "@/components/profiles/sync-profiles-dialog"
 import type { GoLoginProfile } from "@/lib/types"
@@ -19,12 +32,44 @@ const statusColors = {
   error: "bg-red-500",
 }
 
+const gmailStatusConfig = {
+  ok: { color: "bg-green-500", icon: CheckCircle2, label: "OK" },
+  blocked: { color: "bg-red-500", icon: XCircle, label: "Blocked" },
+  password_required: { color: "bg-orange-500", icon: AlertCircle, label: "Password Required" },
+  verification_required: { color: "bg-yellow-500", icon: AlertCircle, label: "Verification Required" },
+  error: { color: "bg-red-500", icon: XCircle, label: "Error" },
+  unknown: { color: "bg-gray-500", icon: HelpCircle, label: "Unknown" },
+}
+
 export function ProfileTable() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>()
+  const [gmailStatusFilter, setGmailStatusFilter] = useState<string>()
+  const [folderFilter, setFolderFilter] = useState<string>()
+  const [folders, setFolders] = useState<string[]>([])
+  const [launchingProfiles, setLaunchingProfiles] = useState<Set<string>>(new Set())
 
-  const { profiles, total, totalPages, isLoading, mutate } = useProfiles(page, 50, statusFilter, search)
+  const { profiles, total, totalPages, isLoading, mutate } = useProfiles(
+    page,
+    50,
+    statusFilter,
+    search,
+    gmailStatusFilter,
+    folderFilter,
+  )
+
+  useEffect(() => {
+    fetch("/api/profiles?limit=1000")
+      .then((res) => res.json())
+      .then((data) => {
+        const uniqueFolders = Array.from(
+          new Set(data.profiles?.map((p: GoLoginProfile) => p.folder_name).filter(Boolean)),
+        ) as string[]
+        setFolders(uniqueFolders.sort())
+      })
+      .catch((err) => console.error("[v0] Error fetching folders:", err))
+  }, [])
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this profile?")) return
@@ -54,6 +99,35 @@ export function ProfileTable() {
     }
   }
 
+  const handleLaunchProfile = async (profileId: string) => {
+    setLaunchingProfiles((prev) => new Set(prev).add(profileId))
+
+    try {
+      const response = await fetch("/api/profiles/launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to launch profile")
+      }
+
+      const data = await response.json()
+      alert(`Profile launched successfully!\n\nBrowser will stay open until you close it manually.`)
+    } catch (error) {
+      console.error("[v0] Error launching profile:", error)
+      alert(`Failed to launch profile: ${error instanceof Error ? error.message : "Unknown error"}`)
+    } finally {
+      setLaunchingProfiles((prev) => {
+        const next = new Set(prev)
+        next.delete(profileId)
+        return next
+      })
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -68,6 +142,18 @@ export function ProfileTable() {
             />
           </div>
           <select
+            value={folderFilter || "all"}
+            onChange={(e) => setFolderFilter(e.target.value === "all" ? undefined : e.target.value)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[180px]"
+          >
+            <option value="all">All Folders</option>
+            {folders.map((folder) => (
+              <option key={folder} value={folder}>
+                📁 {folder}
+              </option>
+            ))}
+          </select>
+          <select
             value={statusFilter || "all"}
             onChange={(e) => setStatusFilter(e.target.value === "all" ? undefined : e.target.value)}
             className="rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -77,6 +163,20 @@ export function ProfileTable() {
             <option value="running">Running</option>
             <option value="paused">Paused</option>
             <option value="error">Error</option>
+          </select>
+          <select
+            value={gmailStatusFilter || "all"}
+            onChange={(e) => setGmailStatusFilter(e.target.value === "all" ? undefined : e.target.value)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[180px]"
+          >
+            <option value="all">All Gmail Status</option>
+            <option value="ok">✓ OK</option>
+            <option value="blocked">✗ Blocked</option>
+            <option value="password_required">⚠ Password Required</option>
+            <option value="verification_required">⚠ Verification Required</option>
+            <option value="error">✗ Error</option>
+            <option value="unknown">? Unknown</option>
+            <option value="unchecked">Not Checked</option>
           </select>
         </div>
         <div className="flex gap-2 ml-4">
@@ -92,6 +192,7 @@ export function ProfileTable() {
               <TableHead>Profile Name</TableHead>
               <TableHead>Folder</TableHead>
               <TableHead>Gmail Email</TableHead>
+              <TableHead>Gmail Status</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last Run</TableHead>
               <TableHead className="w-[80px]">Actions</TableHead>
@@ -100,61 +201,99 @@ export function ProfileTable() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   Loading profiles...
                 </TableCell>
               </TableRow>
             ) : profiles && profiles.length > 0 ? (
-              profiles.map((profile) => (
-                <TableRow key={profile.id}>
-                  <TableCell className="font-medium">{profile.profile_name}</TableCell>
-                  <TableCell>
-                    {profile.folder_name ? (
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <Folder className="h-3.5 w-3.5" />
-                        <span className="text-sm">{profile.folder_name}</span>
-                      </div>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell>{profile.gmail_email || "-"}</TableCell>
-                  <TableCell>
-                    <Badge className={statusColors[profile.status]}>{profile.status}</Badge>
-                  </TableCell>
-                  <TableCell>{profile.last_run ? new Date(profile.last_run).toLocaleString() : "Never"}</TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {profile.status === "idle" && (
-                          <DropdownMenuItem onClick={() => handleStatusChange(profile.id, "running")}>
-                            <Play className="mr-2 h-4 w-4" />
-                            Start
+              profiles.map((profile) => {
+                const gmailStatus = profile.gmail_status || "unknown"
+                const statusConfig =
+                  gmailStatusConfig[gmailStatus as keyof typeof gmailStatusConfig] || gmailStatusConfig.unknown
+                const StatusIcon = statusConfig.icon
+                const isLaunching = launchingProfiles.has(profile.id) // Check if profile is launching
+
+                return (
+                  <TableRow key={profile.id}>
+                    <TableCell className="font-medium">{profile.profile_name}</TableCell>
+                    <TableCell>
+                      {profile.folder_name ? (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Folder className="h-3.5 w-3.5" />
+                          <span className="text-sm">{profile.folder_name}</span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>{profile.gmail_email || "-"}</TableCell>
+                    <TableCell>
+                      {profile.gmail_status ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <StatusIcon className="h-4 w-4" />
+                            <Badge className={statusConfig.color}>{statusConfig.label}</Badge>
+                          </div>
+                          {profile.gmail_status_checked_at && (
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                              <Clock className="h-3 w-3" />
+                              {new Date(profile.gmail_status_checked_at).toLocaleString()}
+                            </div>
+                          )}
+                          {profile.gmail_status_message && (
+                            <div
+                              className="text-xs text-muted-foreground max-w-[200px] truncate"
+                              title={profile.gmail_status_message}
+                            >
+                              {profile.gmail_status_message}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Not checked</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={statusColors[profile.status]}>{profile.status}</Badge>
+                    </TableCell>
+                    <TableCell>{profile.last_run ? new Date(profile.last_run).toLocaleString() : "Never"}</TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleLaunchProfile(profile.id)} disabled={isLaunching}>
+                            <ExternalLink className="mr-2 h-4 w-4" />
+                            {isLaunching ? "Launching..." : "Launch in Local Mode"}
                           </DropdownMenuItem>
-                        )}
-                        {profile.status === "running" && (
-                          <DropdownMenuItem onClick={() => handleStatusChange(profile.id, "paused")}>
-                            <Pause className="mr-2 h-4 w-4" />
-                            Pause
+                          {profile.status === "idle" && (
+                            <DropdownMenuItem onClick={() => handleStatusChange(profile.id, "running")}>
+                              <Play className="mr-2 h-4 w-4" />
+                              Start
+                            </DropdownMenuItem>
+                          )}
+                          {profile.status === "running" && (
+                            <DropdownMenuItem onClick={() => handleStatusChange(profile.id, "paused")}>
+                              <Pause className="mr-2 h-4 w-4" />
+                              Pause
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem onClick={() => handleDelete(profile.id)} className="text-red-600">
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
                           </DropdownMenuItem>
-                        )}
-                        <DropdownMenuItem onClick={() => handleDelete(profile.id)} className="text-red-600">
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             ) : (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   No profiles found
                 </TableCell>
               </TableRow>

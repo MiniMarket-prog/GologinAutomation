@@ -9,6 +9,7 @@ import { handleStarEmail } from "./tasks/star-email-handler"
 import { handleSendEmail } from "./tasks/send-email-handler"
 import { handleReplyToEmail } from "./tasks/reply-email-handler"
 import { handleReportToInbox } from "./tasks/report-to-inbox-handler"
+import { handleCheckGmail } from "./tasks/check-gmail-handler"
 
 export class TaskExecutor {
   private launcher: ProfileLauncher
@@ -80,6 +81,10 @@ export class TaskExecutor {
 
         case "report_to_inbox":
           result = await handleReportToInbox(gmailAutomator, page, task.config)
+          break
+
+        case "check_gmail_status":
+          result = await handleCheckGmail(gmailAutomator, task.config)
           break
 
         default:

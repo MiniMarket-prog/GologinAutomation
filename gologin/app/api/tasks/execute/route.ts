@@ -1,95 +1,128 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server"
+import { TaskExecutor } from "@/lib/automation/task-executor"
 import { NextResponse } from "next/server"
-
-export async function GET(request: Request) {
-  try {
-    const supabase = await getSupabaseServerClient()
-    const { searchParams } = new URL(request.url)
-
-    const status = searchParams.get("status")
-    const profileId = searchParams.get("profile_id")
-    const search = searchParams.get("search")
-    const limit = Number.parseInt(searchParams.get("limit") || "100")
-
-    let query = supabase
-      .from("automation_tasks")
-      .select(
-        `
-        *,
-        gologin_profiles (
-          profile_name,
-          folder_name
-        )
-      `,
-      )
-      .order("created_at", { ascending: false })
-      .limit(limit)
-
-    if (status) {
-      query = query.eq("status", status)
-    }
-
-    if (profileId) {
-      query = query.eq("profile_id", profileId)
-    }
-
-    const { data, error } = await query
-
-    if (error) throw error
-
-    let tasksWithProfileData = data?.map((task: any) => ({
-      ...task,
-      profile_name: task.gologin_profiles?.profile_name || "Unknown Profile",
-      folder_name: task.gologin_profiles?.folder_name || null,
-    }))
-
-    if (search && tasksWithProfileData) {
-      const searchLower = search.toLowerCase()
-      tasksWithProfileData = tasksWithProfileData.filter((task: any) => {
-        const profileNameMatch = task.profile_name?.toLowerCase().includes(searchLower)
-        const folderNameMatch = task.folder_name?.toLowerCase().includes(searchLower)
-        return profileNameMatch || folderNameMatch
-      })
-    }
-
-    return NextResponse.json({ tasks: tasksWithProfileData })
-  } catch (error: any) {
-    console.error("[v0] Error fetching tasks:", error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-}
 
 export async function POST(request: Request) {
   try {
     const supabase = await getSupabaseServerClient()
     const body = await request.json()
 
-    const { data: user } = await supabase.auth.getUser()
-    if (!user.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    const { task_id } = body
+
+    if (!task_id) {
+      return NextResponse.json({ error: "Task ID is required" }, { status: 400 })
     }
 
-    const { data, error } = await supabase
+    const [apiKeyResult, modeResult] = await Promise.all([
+      supabase.from("settings").select("value").eq("key", "gologin_api_key").single(),
+      supabase.from("settings").select("value").eq("key", "gologin_mode").single(),
+    ])
+
+    if (apiKeyResult.error || !apiKeyResult.data?.value) {
+      return NextResponse.json(
+        { error: "GoLogin API key not found. Please save it in Settings first." },
+        { status: 400 },
+      )
+    }
+
+    const gologin_api_key = apiKeyResult.data.value
+    const gologin_mode = (modeResult.data?.value as "cloud" | "local") || "cloud"
+
+    // Get task
+    const { data: task, error: taskError } = await supabase
       .from("automation_tasks")
-      .insert({
-        profile_id: body.profile_id,
-        task_type: body.task_type,
-        config: body.config || {},
-        priority: body.priority || 0,
-        scheduled_at: body.scheduled_at || new Date().toISOString(),
-        created_by: null, // Set to null instead of user.user.id
-      })
-      .select()
+      .select("*")
+      .eq("id", task_id)
       .single()
 
-    if (error) {
-      console.error("[v0] Database error creating task:", error)
-      throw error
+    if (taskError) throw taskError
+
+    // Get profile
+    const { data: profile, error: profileError } = await supabase
+      .from("gologin_profiles")
+      .select("*")
+      .eq("id", task.profile_id)
+      .single()
+
+    if (profileError) throw profileError
+
+    // Get default behavior pattern
+    const { data: behaviorPattern, error: behaviorError } = await supabase
+      .from("behavior_patterns")
+      .select("*")
+      .eq("is_default", true)
+      .single()
+
+    if (behaviorError) throw behaviorError
+
+    // Update task status to running
+    await supabase
+      .from("automation_tasks")
+      .update({
+        status: "running",
+        started_at: new Date().toISOString(),
+      })
+      .eq("id", task_id)
+
+    // Update profile status
+    await supabase.from("gologin_profiles").update({ status: "running" }).eq("id", profile.id)
+
+    const executor = new TaskExecutor(gologin_api_key, gologin_mode, behaviorPattern.config)
+    const result = await executor.executeTask(task, profile)
+
+    // Update task status
+    await supabase
+      .from("automation_tasks")
+      .update({
+        status: result.success ? "completed" : "failed",
+        completed_at: new Date().toISOString(),
+        error_message: result.error || null,
+      })
+      .eq("id", task_id)
+
+    const profileUpdates: any = {
+      status: "idle",
+      last_run: new Date().toISOString(),
     }
 
-    return NextResponse.json(data)
+    console.log("[v0] Task type:", task.task_type)
+    console.log("[v0] Task result:", JSON.stringify(result, null, 2))
+
+    if (task.task_type === "check_gmail_status" && result.result) {
+      console.log("[v0] ✓ Gmail status check detected")
+      console.log("[v0] Result data:", JSON.stringify(result.result, null, 2))
+
+      profileUpdates.gmail_status = result.result.status
+      profileUpdates.gmail_status_checked_at = new Date().toISOString()
+      profileUpdates.gmail_status_message = result.result.message
+
+      console.log("[v0] Profile updates to apply:", JSON.stringify(profileUpdates, null, 2))
+    } else {
+      console.log("[v0] Gmail status check NOT detected")
+      console.log("[v0] Condition check - task_type match:", task.task_type === "check_gmail_status")
+      console.log("[v0] Condition check - result.result exists:", !!result.result)
+    }
+
+    console.log("[v0] Updating profile with:", JSON.stringify(profileUpdates, null, 2))
+    const updateResult = await supabase.from("gologin_profiles").update(profileUpdates).eq("id", profile.id)
+    console.log("[v0] Profile update result:", JSON.stringify(updateResult, null, 2))
+
+    // Log activity
+    await supabase.from("activity_logs").insert({
+      profile_id: profile.id,
+      task_id: task_id,
+      action: task.task_type,
+      details: result.result || {},
+      duration_ms: result.duration,
+      success: result.success,
+    })
+
+    return NextResponse.json({
+      success: result.success,
+      result: result,
+    })
   } catch (error: any) {
-    console.error("[v0] Error creating task:", error)
+    console.error("[v0] Error executing task:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

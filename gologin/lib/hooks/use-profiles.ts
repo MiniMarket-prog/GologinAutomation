@@ -5,12 +5,21 @@ import type { GoLoginProfile } from "@/lib/types"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
-export function useProfiles(page = 1, limit = 50, status?: string, search?: string) {
+export function useProfiles(
+  page = 1,
+  limit = 50,
+  status?: string,
+  search?: string,
+  gmailStatus?: string,
+  folder?: string,
+) {
   const params = new URLSearchParams({
     page: page.toString(),
     limit: limit.toString(),
     ...(status && { status }),
     ...(search && { search }),
+    ...(gmailStatus && { gmailStatus }),
+    ...(folder && { folder }),
   })
 
   const { data, error, isLoading, mutate } = useSWR(`/api/profiles?${params}`, fetcher, {

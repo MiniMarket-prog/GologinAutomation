@@ -10,6 +10,8 @@ export async function GET(request: Request) {
     const limit = Number.parseInt(searchParams.get("limit") || "50")
     const status = searchParams.get("status")
     const search = searchParams.get("search")
+    const gmailStatus = searchParams.get("gmailStatus")
+    const folder = searchParams.get("folder")
 
     const offset = (page - 1) * limit
 
@@ -21,6 +23,18 @@ export async function GET(request: Request) {
 
     if (status) {
       query = query.eq("status", status)
+    }
+
+    if (gmailStatus) {
+      if (gmailStatus === "unchecked") {
+        query = query.is("gmail_status", null)
+      } else {
+        query = query.eq("gmail_status", gmailStatus)
+      }
+    }
+
+    if (folder) {
+      query = query.eq("folder_name", folder)
     }
 
     if (search) {

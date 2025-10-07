@@ -197,6 +197,7 @@ export function CreateTaskDialog() {
                 required
               >
                 <option value="login">Login to Gmail</option>
+                <option value="check_gmail_status">Check Gmail Status</option>
                 <option value="check_inbox">Check Inbox</option>
                 <option value="read_email">Read Email</option>
                 <option value="star_email">Star Email</option>

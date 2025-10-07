@@ -1,21 +1,54 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Activity, CheckCircle2, Clock, Users } from "lucide-react"
+import { getSupabaseServerClient } from "@/lib/supabase/server"
 
 async function getStats() {
-  const baseUrl =
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    (typeof window === "undefined" ? `http://localhost:${process.env.PORT || 3000}` : "")
+  try {
+    const supabase = await getSupabaseServerClient()
 
-  const response = await fetch(`${baseUrl}/api/profiles/stats`, {
-    cache: "no-store",
-  })
+    // Get total profiles
+    const { count: total } = await supabase.from("gologin_profiles").select("*", { count: "exact", head: true })
 
-  if (!response.ok) {
-    console.error("[v0] Failed to fetch stats:", response.status)
-    return { total: 0, byStatus: {}, activeTasks: 0, recentActivity: 0 }
+    // Get profiles by status
+    const { data: statusData } = await supabase
+      .from("gologin_profiles")
+      .select("status")
+      .then((res) => {
+        const counts = {
+          idle: 0,
+          running: 0,
+          paused: 0,
+          error: 0,
+        }
+        res.data?.forEach((p) => {
+          counts[p.status as keyof typeof counts]++
+        })
+        return { data: counts }
+      })
+
+    // Get recent activity count (last 24 hours)
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { count: recentActivity } = await supabase
+      .from("activity_logs")
+      .select("*", { count: "exact", head: true })
+      .gte("created_at", yesterday)
+
+    // Get active tasks count
+    const { count: activeTasks } = await supabase
+      .from("automation_tasks")
+      .select("*", { count: "exact", head: true })
+      .in("status", ["pending", "running"])
+
+    return {
+      total: total || 0,
+      byStatus: statusData || { idle: 0, running: 0, paused: 0, error: 0 },
+      recentActivity: recentActivity || 0,
+      activeTasks: activeTasks || 0,
+    }
+  } catch (error) {
+    console.error("[v0] Error fetching stats:", error)
+    return { total: 0, byStatus: { idle: 0, running: 0, paused: 0, error: 0 }, activeTasks: 0, recentActivity: 0 }
   }
-
-  return response.json()
 }
 
 export async function ProfileStats() {

@@ -1,9 +1,15 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server"
+import { getSupabaseAdminClient } from "@/lib/supabase/admin"
+import { isAdmin } from "@/lib/utils/auth"
 import { NextResponse } from "next/server"
 
 export async function GET(request: Request) {
   try {
-    const supabase = await getSupabaseServerClient()
+    const userIsAdmin = await isAdmin()
+    console.log("[v0] Admin status:", userIsAdmin)
+
+    const supabase = userIsAdmin ? getSupabaseAdminClient() : await getSupabaseServerClient()
+
     const { searchParams } = new URL(request.url)
 
     const page = Number.parseInt(searchParams.get("page") || "1")
@@ -12,6 +18,16 @@ export async function GET(request: Request) {
     const search = searchParams.get("search")
     const gmailStatus = searchParams.get("gmailStatus")
     const folder = searchParams.get("folder")
+
+    console.log("[v0] Query params:", { page, limit, status, search, gmailStatus, folder })
+
+    if (folder) {
+      const { data: sampleProfiles } = await supabase.from("gologin_profiles").select("folder_name").limit(10)
+
+      const uniqueFolders = Array.from(new Set(sampleProfiles?.map((p) => p.folder_name).filter(Boolean)))
+      console.log("[v0] Sample folder names in DB:", uniqueFolders)
+      console.log("[v0] Looking for folder:", folder)
+    }
 
     const offset = (page - 1) * limit
 
@@ -42,6 +58,8 @@ export async function GET(request: Request) {
     }
 
     const { data, error, count } = await query
+
+    console.log("[v0] Query result:", { count, dataLength: data?.length, error })
 
     if (error) throw error
 

@@ -1,6 +1,8 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server"
+import { getSupabaseAdminClient } from "@/lib/supabase/admin"
 import { TaskExecutor } from "@/lib/automation/task-executor"
 import type { AutomationTask, BehaviorPattern } from "@/lib/types"
+import { getEnvironmentMode } from "@/lib/utils/environment"
 
 export class TaskQueue {
   private isProcessing = false
@@ -67,7 +69,8 @@ export class TaskQueue {
       console.log("[v0] Fetching GoLogin mode setting...")
       const { data: modeSetting } = await supabase.from("settings").select("value").eq("key", "gologin_mode").single()
 
-      const mode = (modeSetting?.value || "cloud") as "cloud" | "local"
+      const userMode = (modeSetting?.value || "cloud") as "cloud" | "local"
+      const mode = getEnvironmentMode(userMode)
       console.log(`[v0] ✓ GoLogin mode: ${mode}`)
 
       // Process each task
@@ -161,7 +164,9 @@ export class TaskQueue {
           gmail_status_message: gmailMessage,
         })
 
-        const { data: updateData, error: updateError } = await supabase
+        const adminClient = getSupabaseAdminClient()
+        // ts-expect-error - Supabase type inference issue with admin client
+        const { data: updateData, error: updateError } = await adminClient
           .from("gologin_profiles")
           .update({
             gmail_status: gmailStatus,

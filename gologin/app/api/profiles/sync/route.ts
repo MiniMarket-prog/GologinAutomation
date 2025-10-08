@@ -1,99 +1,148 @@
-import { getSupabaseServerClient } from "@/lib/supabase/server"
-import { GoLoginAPI } from "@/lib/gologin/api"
 import { NextResponse } from "next/server"
+import { getSupabaseServerClient } from "@/lib/supabase/server"
+import { getSupabaseAdminClient } from "@/lib/supabase/admin"
+import { isAdmin } from "@/lib/utils/auth"
+import { gologinAPI } from "@/lib/gologin/api"
 
-export async function POST(request: Request) {
+export async function POST() {
   try {
     const supabase = await getSupabaseServerClient()
 
-    const { data: apiKeySetting, error: settingsError } = await supabase
-      .from("settings")
-      .select("value")
-      .eq("key", "gologin_api_key")
-      .single()
+    // Get current user
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
 
-    if (settingsError || !apiKeySetting?.value) {
-      return NextResponse.json(
-        { error: "GoLogin API key not found. Please save it in Settings first." },
-        { status: 400 },
-      )
-    }
-
-    const gologin_api_key = apiKeySetting.value
-
-    const { data: user } = await supabase.auth.getUser()
-    if (!user.user) {
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Fetch profiles and folders from GoLogin
-    const gologinAPI = new GoLoginAPI(gologin_api_key)
-    const [gologinProfiles, gologinFolders] = await Promise.all([gologinAPI.getProfiles(), gologinAPI.getFolders()])
+    const userIsAdmin = await isAdmin()
+    console.log(`[v0] User ${user.email} is admin: ${userIsAdmin}`)
 
-    console.log(`[v0] Found ${gologinProfiles.length} profiles from GoLogin`)
-
-    if (gologinProfiles.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: "No profiles found in your GoLogin account",
-        added: 0,
-        updated: 0,
-        total: 0,
-      })
+    if (!userIsAdmin) {
+      return NextResponse.json(
+        { error: "Unauthorized: Only administrators can sync profiles from GoLogin" },
+        { status: 403 },
+      )
     }
 
-    const folderMap = new Map(gologinFolders.map((f: any) => [f.id, f.name || "Unnamed Folder"]))
+    const dbClient = getSupabaseAdminClient()
 
-    console.log(`[v0] 📁 Folder Map:`, Array.from(folderMap.entries()))
-    console.log(
-      `[v0] 📋 Sample profile folders:`,
-      gologinProfiles.slice(0, 3).map((p) => ({ id: p.id, name: p.name, folders: p.folders })),
-    )
+    console.log(`[v0] Ensuring user record exists for ${user.email}`)
+    let userId = user.id
 
-    const profilesToSync = gologinProfiles.map((p) => {
-      // The GoLogin API returns folder names in the folders array, not IDs
-      const folderName = p.folders && p.folders.length > 0 ? p.folders[0] : "No Folder"
+    // First, check if user exists by ID
+    const { data: existingUser } = await dbClient.from("users").select("id").eq("id", user.id).single()
 
-      if (p.folders && p.folders.length > 0) {
-        console.log(`[v0] Profile "${p.name}" has folders:`, p.folders, `→ using: "${folderName}"`)
+    if (!existingUser) {
+      console.log("[v0] User not found by ID, attempting to create...")
+
+      // Try to insert the user
+      const { error: insertError } = await dbClient.from("users").insert({
+        id: user.id,
+        email: user.email,
+        role: userIsAdmin ? "admin" : "user",
+      } as any)
+
+      if (insertError) {
+        // If insert fails due to duplicate email, find the existing user
+        if (insertError.code === "23505" && insertError.message.includes("email")) {
+          console.log("[v0] User exists with same email, fetching existing user...")
+          const { data: userByEmail } = await dbClient
+            .from("users")
+            .select("id")
+            .eq("email", user.email || "")
+            .single()
+
+          if (userByEmail) {
+            userId = (userByEmail as any).id
+            console.log(`[v0] Using existing user ID: ${userId}`)
+          } else {
+            throw new Error("Failed to find or create user record")
+          }
+        } else {
+          console.error("[v0] Error creating user record:", insertError)
+          throw new Error(`Failed to create user record: ${insertError.message}`)
+        }
+      } else {
+        console.log("[v0] User record created successfully")
       }
+    } else {
+      console.log("[v0] User record already exists")
+    }
+
+    console.log("[v0] Fetching profiles from GoLogin API...")
+    const gologinProfiles = await gologinAPI.getProfiles()
+    console.log(`[v0] Found ${gologinProfiles.length} profiles from GoLogin`)
+
+    console.log("[v0] Fetching folders from GoLogin API...")
+    const folders = await gologinAPI.getFolders()
+    console.log(`[v0] Found ${folders.length} folders from GoLogin`)
+
+    const folderMap = new Map(folders.map((folder: any) => [folder.id || folder._id, folder.name || "Uncategorized"]))
+    console.log("[v0] Folder map:", Object.fromEntries(folderMap))
+
+    const profilesWithFolders = gologinProfiles.map((profile: any) => {
+      // GoLogin API returns profiles with a "folders" array containing folder names
+      const folderName = profile.folders && profile.folders.length > 0 ? profile.folders[0] : "Uncategorized"
 
       return {
-        profile_id: p.id,
-        profile_name: p.name || `Profile ${p.id}`,
+        profile_id: profile.id,
+        profile_name: profile.name || `Profile ${profile.id}`,
         folder_name: folderName,
+        assigned_user_id: userId,
+        status: "idle",
       }
     })
 
-    const uniqueProfiles = Array.from(new Map(profilesToSync.map((p) => [p.profile_id, p])).values())
+    console.log(`[v0] Mapped ${profilesWithFolders.length} profiles with folder names`)
 
-    console.log(`[v0] Deduplicating: ${profilesToSync.length} profiles → ${uniqueProfiles.length} unique profiles`)
+    const folderDistribution = profilesWithFolders.reduce(
+      (acc: Record<string, number>, p) => {
+        const folderName = p.folder_name as string
+        acc[folderName] = (acc[folderName] || 0) + 1
+        return acc
+      },
+      {} as Record<string, number>,
+    )
+    console.log("[v0] Folder distribution:", folderDistribution)
 
-    // Use upsert to insert new profiles or update existing ones
-    const { data: syncedProfiles, error: syncError } = await supabase
+    const uniqueProfiles = Array.from(new Map(profilesWithFolders.map((p) => [p.profile_id, p])).values())
+    console.log(`[v0] Deduplicating: ${profilesWithFolders.length} → ${uniqueProfiles.length} unique profiles`)
+
+    if (uniqueProfiles.length === 0) {
+      return NextResponse.json({
+        success: true,
+        message: "No profiles to sync",
+        count: 0,
+      })
+    }
+
+    console.log(`[v0] Using ${userIsAdmin ? "admin" : "regular"} client for sync`)
+    const { data, error } = await dbClient
       .from("gologin_profiles")
-      .upsert(uniqueProfiles, {
+      .upsert(uniqueProfiles as any, {
         onConflict: "profile_id",
         ignoreDuplicates: false,
       })
       .select()
 
-    if (syncError) {
-      console.error("[v0] Error syncing profiles:", syncError)
-      return NextResponse.json({ error: `Failed to sync profiles: ${syncError.message}` }, { status: 500 })
+    if (error) {
+      console.error("[v0] Error upserting profiles:", error)
+      throw new Error(`Failed to sync profiles: ${error.message}`)
     }
 
-    const syncedCount = syncedProfiles?.length || 0
-    console.log(`[v0] Successfully synced ${syncedCount} profiles`)
+    console.log(`[v0] Successfully synced ${data?.length || uniqueProfiles.length} profiles`)
 
     return NextResponse.json({
       success: true,
-      message: `Successfully synced ${syncedCount} profiles from GoLogin`,
-      synced: syncedCount,
-      total: gologinProfiles.length,
+      message: `Successfully synced ${data?.length || uniqueProfiles.length} profiles`,
+      count: data?.length || uniqueProfiles.length,
     })
-  } catch (error: any) {
+  } catch (error) {
     console.error("[v0] Error syncing profiles:", error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    const errorMessage = error instanceof Error ? error.message : "Failed to sync profiles"
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
   }
 }

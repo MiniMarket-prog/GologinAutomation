@@ -8,6 +8,7 @@ export async function GET(request: Request) {
 
     const status = searchParams.get("status")
     const profileId = searchParams.get("profile_id")
+    const search = searchParams.get("search")
     const limit = Number.parseInt(searchParams.get("limit") || "100")
 
     let query = supabase
@@ -16,7 +17,8 @@ export async function GET(request: Request) {
         `
         *,
         gologin_profiles (
-          profile_name
+          profile_name,
+          folder_name
         )
       `,
       )
@@ -35,12 +37,22 @@ export async function GET(request: Request) {
 
     if (error) throw error
 
-    const tasksWithProfileName = data?.map((task: any) => ({
+    let tasksWithProfileData = data?.map((task: any) => ({
       ...task,
       profile_name: task.gologin_profiles?.profile_name || "Unknown Profile",
+      folder_name: task.gologin_profiles?.folder_name || null,
     }))
 
-    return NextResponse.json({ tasks: tasksWithProfileName })
+    if (search && tasksWithProfileData) {
+      const searchLower = search.toLowerCase()
+      tasksWithProfileData = tasksWithProfileData.filter((task: any) => {
+        const profileNameMatch = task.profile_name?.toLowerCase().includes(searchLower)
+        const folderNameMatch = task.folder_name?.toLowerCase().includes(searchLower)
+        return profileNameMatch || folderNameMatch
+      })
+    }
+
+    return NextResponse.json({ tasks: tasksWithProfileData })
   } catch (error: any) {
     console.error("[v0] Error fetching tasks:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
@@ -65,7 +77,7 @@ export async function POST(request: Request) {
         config: body.config || {},
         priority: body.priority || 0,
         scheduled_at: body.scheduled_at || new Date().toISOString(),
-        created_by: null, // Set to null instead of user.user.id
+        created_by: user.user.id, // Use actual user ID
       })
       .select()
       .single()

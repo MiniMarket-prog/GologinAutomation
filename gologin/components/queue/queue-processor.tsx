@@ -3,11 +3,12 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Play, Loader2 } from "lucide-react"
+import { Play, Loader2, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 export function QueueProcessor() {
   const [processing, setProcessing] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [autoProcess, setAutoProcess] = useState(false)
   const { toast } = useToast()
 
@@ -37,6 +38,41 @@ export function QueueProcessor() {
       })
     } finally {
       setProcessing(false)
+    }
+  }
+
+  const handleClearPending = async () => {
+    if (!confirm("Are you sure you want to clear all pending tasks? This action cannot be undone.")) {
+      return
+    }
+
+    setClearing(true)
+
+    try {
+      const response = await fetch("/api/tasks/clear-pending", {
+        method: "DELETE",
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) throw new Error(data.error || "Failed to clear pending tasks")
+
+      toast({
+        title: "Pending tasks cleared",
+        description: data.message || "All pending tasks have been removed.",
+      })
+
+      // Trigger a page refresh to update the task list
+      window.location.reload()
+    } catch (error: any) {
+      console.error("[v0] Error clearing pending tasks:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to clear pending tasks",
+        variant: "destructive",
+      })
+    } finally {
+      setClearing(false)
     }
   }
 
@@ -88,6 +124,20 @@ export function QueueProcessor() {
               Stop Auto-Process
             </Button>
           )}
+
+          <Button variant="outline" onClick={handleClearPending} disabled={clearing} className="ml-auto bg-transparent">
+            {clearing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Clearing...
+              </>
+            ) : (
+              <>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Clear Pending Tasks
+              </>
+            )}
+          </Button>
         </div>
 
         <p className="text-xs text-muted-foreground">

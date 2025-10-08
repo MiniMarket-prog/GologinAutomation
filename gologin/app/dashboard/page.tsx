@@ -1,7 +1,7 @@
 import { Suspense } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { CheckCircle2, Users } from "lucide-react"
-import { ProfileStats } from "@/components/dashboard/profile-stats"
+import { EnhancedStats } from "@/components/dashboard/enhanced-stats"
 import { RecentActivity } from "@/components/dashboard/recent-activity"
 
 export default function DashboardPage() {
@@ -9,12 +9,10 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">Monitor your GoLogin automation system</p>
+        <p className="text-muted-foreground">Monitor your GoLogin automation activity and performance</p>
       </div>
 
-      <Suspense fallback={<StatsLoading />}>
-        <ProfileStats />
-      </Suspense>
+      <EnhancedStats />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -56,23 +54,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
-    </div>
-  )
-}
-
-function StatsLoading() {
-  return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-      {[...Array(4)].map((_, i) => (
-        <Card key={i}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Loading...</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-8 w-20 animate-pulse rounded bg-muted" />
-          </CardContent>
-        </Card>
-      ))}
     </div>
   )
 }

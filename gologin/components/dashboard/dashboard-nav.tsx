@@ -4,8 +4,9 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
-import { LayoutDashboard, Users, ListTodo, Activity, LogOut, Settings } from "lucide-react"
+import { LayoutDashboard, Users, ListTodo, Activity, LogOut, Settings, User, Shield } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useEffect, useState } from "react"
 
 const navItems = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
@@ -18,6 +19,20 @@ const navItems = [
 export function DashboardNav() {
   const pathname = usePathname()
   const router = useRouter()
+  const [userEmail, setUserEmail] = useState<string>("")
+  const [isAdmin, setIsAdmin] = useState<boolean>(false)
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      const supabase = getSupabaseBrowserClient()
+      const { data } = await supabase.auth.getUser()
+      if (data.user) {
+        setUserEmail(data.user.email || "")
+        setIsAdmin(data.user.user_metadata?.role === "admin")
+      }
+    }
+    fetchUser()
+  }, [])
 
   const handleLogout = async () => {
     const supabase = getSupabaseBrowserClient()
@@ -51,8 +66,28 @@ export function DashboardNav() {
             </Link>
           )
         })}
+        {isAdmin && (
+          <Link
+            href="/dashboard/admin"
+            className={cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+              pathname === "/dashboard/admin"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            <Shield className="h-5 w-5" />
+            Admin
+          </Link>
+        )}
       </nav>
-      <div className="border-t border-border p-4">
+      <div className="border-t border-border p-4 space-y-2">
+        {userEmail && (
+          <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
+            <User className="h-4 w-4" />
+            <span className="truncate">{userEmail}</span>
+          </div>
+        )}
         <Button variant="ghost" className="w-full justify-start" onClick={handleLogout}>
           <LogOut className="mr-3 h-5 w-5" />
           Logout

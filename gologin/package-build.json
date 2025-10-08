@@ -1,0 +1,9 @@
+{
+  "name": "gologin-automation-dist",
+  "version": "1.0.0",
+  "description": "GoLogin Automation App - Distribution Package",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {}
+}

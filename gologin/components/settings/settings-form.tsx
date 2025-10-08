@@ -6,17 +6,24 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Info } from "lucide-react"
 
 export function SettingsForm() {
   const [apiKey, setApiKey] = useState("")
   const [mode, setMode] = useState<"cloud" | "local">("cloud")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [isVercel, setIsVercel] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
     const loadSettings = async () => {
       try {
+        const envResponse = await fetch("/api/environment")
+        const envData = await envResponse.json()
+        setIsVercel(envData.isVercel)
+
         const [apiKeyResponse, modeResponse] = await Promise.all([
           fetch("/api/settings?key=gologin_api_key"),
           fetch("/api/settings?key=gologin_mode"),
@@ -29,7 +36,8 @@ export function SettingsForm() {
 
         if (modeResponse.ok) {
           const data = await modeResponse.json()
-          setMode((data.value as "cloud" | "local") || "cloud")
+          const userMode = (data.value as "cloud" | "local") || "cloud"
+          setMode(envData?.isVercel ? "cloud" : userMode)
         }
       } catch (error) {
         console.error("Error loading settings:", error)
@@ -99,6 +107,16 @@ export function SettingsForm() {
 
   return (
     <div className="space-y-4">
+      {isVercel && (
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            Running on Vercel - Cloud mode is automatically enabled. Local mode requires running the app on your own
+            machine with GoLogin Desktop installed.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="space-y-2">
         <Label htmlFor="api_key">GoLogin API Key</Label>
         <Input
@@ -115,7 +133,7 @@ export function SettingsForm() {
 
       <div className="space-y-2">
         <Label htmlFor="mode">Connection Mode</Label>
-        <Select value={mode} onValueChange={(value) => setMode(value as "cloud" | "local")}>
+        <Select value={mode} onValueChange={(value) => setMode(value as "cloud" | "local")} disabled={isVercel}>
           <SelectTrigger id="mode">
             <SelectValue placeholder="Select mode" />
           </SelectTrigger>
@@ -125,9 +143,11 @@ export function SettingsForm() {
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          {mode === "cloud"
-            ? "Browser runs on GoLogin's servers (no local installation needed)"
-            : "Browser runs on your machine (requires GoLogin Desktop app installed and running)"}
+          {isVercel
+            ? "Cloud mode is required when running on Vercel. To use Local mode, run the app on your own machine."
+            : mode === "cloud"
+              ? "Browser runs on GoLogin's servers (no local installation needed)"
+              : "Browser runs on your machine (requires GoLogin Desktop app installed and running)"}
         </p>
       </div>
 

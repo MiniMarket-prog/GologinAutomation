@@ -23,6 +23,7 @@ import {
 } from "lucide-react"
 import { AddProfileDialog } from "@/components/profiles/add-profile-dialog"
 import { SyncProfilesDialog } from "@/components/profiles/sync-profiles-dialog"
+import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import type { GoLoginProfile } from "@/lib/types"
 
 const statusColors = {
@@ -49,6 +50,7 @@ export function ProfileTable() {
   const [folderFilter, setFolderFilter] = useState<string>()
   const [folders, setFolders] = useState<string[]>([])
   const [launchingProfiles, setLaunchingProfiles] = useState<Set<string>>(new Set())
+  const [isAdmin, setIsAdmin] = useState<boolean>(false)
 
   const { profiles, total, totalPages, isLoading, mutate } = useProfiles(
     page,
@@ -60,13 +62,21 @@ export function ProfileTable() {
   )
 
   useEffect(() => {
-    fetch("/api/profiles?limit=1000")
+    const checkAdmin = async () => {
+      const supabase = getSupabaseBrowserClient()
+      const { data } = await supabase.auth.getUser()
+      if (data.user) {
+        setIsAdmin(data.user.user_metadata?.role === "admin")
+      }
+    }
+    checkAdmin()
+  }, [])
+
+  useEffect(() => {
+    fetch("/api/folders")
       .then((res) => res.json())
       .then((data) => {
-        const uniqueFolders = Array.from(
-          new Set(data.profiles?.map((p: GoLoginProfile) => p.folder_name).filter(Boolean)),
-        ) as string[]
-        setFolders(uniqueFolders.sort())
+        setFolders(data.folders || [])
       })
       .catch((err) => console.error("[v0] Error fetching folders:", err))
   }, [])
@@ -180,7 +190,7 @@ export function ProfileTable() {
           </select>
         </div>
         <div className="flex gap-2 ml-4">
-          <SyncProfilesDialog onSuccess={mutate} />
+          {isAdmin && <SyncProfilesDialog onSuccess={mutate} />}
           <AddProfileDialog />
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server"
 import { TaskQueue } from "@/lib/queue/task-queue"
+import { setCurrentQueue } from "@/lib/queue/queue-manager"
 import { NextResponse } from "next/server"
 
 export async function POST(request: Request) {
@@ -20,11 +21,18 @@ export async function POST(request: Request) {
     }
 
     const queue = new TaskQueue(apiKeySetting.value)
-    await queue.processPendingTasks()
+    setCurrentQueue(queue)
+
+    try {
+      await queue.processPendingTasks()
+    } finally {
+      setCurrentQueue(null)
+    }
 
     return NextResponse.json({ success: true, message: "Queue processed" })
   } catch (error: any) {
     console.error("[v0] Error processing queue:", error)
+    setCurrentQueue(null)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

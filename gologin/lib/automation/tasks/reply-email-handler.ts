@@ -12,6 +12,8 @@ export async function handleReplyToEmail(
 
   console.log(`[v0] Searching for emails from: ${config.searchFrom}`)
 
+  await gmailAutomator.ensureGmailLoaded()
+
   const searchQuery = `from:${config.searchFrom}`
   const searchResult = await gmailAutomator.searchEmails(searchQuery)
 

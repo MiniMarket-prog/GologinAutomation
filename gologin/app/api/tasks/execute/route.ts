@@ -1,6 +1,8 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server"
+import { getSupabaseAdminClient } from "@/lib/supabase/admin"
 import { TaskExecutor } from "@/lib/automation/task-executor"
 import { NextResponse } from "next/server"
+import { getEnvironmentMode } from "@/lib/utils/environment"
 
 export async function POST(request: Request) {
   try {
@@ -26,7 +28,8 @@ export async function POST(request: Request) {
     }
 
     const gologin_api_key = apiKeyResult.data.value
-    const gologin_mode = (modeResult.data?.value as "cloud" | "local") || "cloud"
+    const userMode = (modeResult.data?.value as "cloud" | "local") || "cloud"
+    const gologin_mode = getEnvironmentMode(userMode)
 
     // Get task
     const { data: task, error: taskError } = await supabase
@@ -37,14 +40,24 @@ export async function POST(request: Request) {
 
     if (taskError) throw taskError
 
-    // Get profile
-    const { data: profile, error: profileError } = await supabase
+    const { data: profiles, error: profileError } = await supabase
       .from("gologin_profiles")
       .select("*")
       .eq("id", task.profile_id)
-      .single()
 
-    if (profileError) throw profileError
+    if (profileError) {
+      throw new Error(`Database error fetching profile: ${profileError.message}`)
+    }
+
+    if (!profiles || profiles.length === 0) {
+      throw new Error(`Profile ${task.profile_id} not found. It may have been deleted or you don't have access to it.`)
+    }
+
+    if (profiles.length > 1) {
+      throw new Error(`Data integrity error: Multiple profiles found with the same ID`)
+    }
+
+    const profile = profiles[0]
 
     // Get default behavior pattern
     const { data: behaviorPattern, error: behaviorError } = await supabase
@@ -108,7 +121,9 @@ export async function POST(request: Request) {
     console.log("[v0] Profile update result:", JSON.stringify(updateResult, null, 2))
 
     // Log activity
-    await supabase.from("activity_logs").insert({
+    console.log("[v0] Creating activity log...")
+    const adminClient = getSupabaseAdminClient()
+    const { error: activityError } = await (adminClient.from("activity_logs") as any).insert({
       profile_id: profile.id,
       task_id: task_id,
       action: task.task_type,
@@ -116,6 +131,12 @@ export async function POST(request: Request) {
       duration_ms: result.duration,
       success: result.success,
     })
+
+    if (activityError) {
+      console.error("[v0] ❌ Error creating activity log:", activityError)
+    } else {
+      console.log("[v0] ✓ Activity log created successfully")
+    }
 
     return NextResponse.json({
       success: result.success,

@@ -11,5 +11,6 @@ export async function handleSendEmail(
   }
 
   console.log(`[v0] Sending email to: ${config.to}`)
+  await gmailAutomator.ensureGmailLoaded()
   return await gmailAutomator.sendEmail(config.to, config.subject, config.body)
 }

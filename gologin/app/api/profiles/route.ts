@@ -18,8 +18,9 @@ export async function GET(request: Request) {
     const search = searchParams.get("search")
     const gmailStatus = searchParams.get("gmailStatus")
     const folder = searchParams.get("folder")
+    const includeDeleted = searchParams.get("includeDeleted") === "true"
 
-    console.log("[v0] Query params:", { page, limit, status, search, gmailStatus, folder })
+    console.log("[v0] Query params:", { page, limit, status, search, gmailStatus, folder, includeDeleted })
 
     if (folder) {
       const { data: sampleProfiles } = await supabase.from("gologin_profiles").select("folder_name").limit(10)
@@ -36,6 +37,10 @@ export async function GET(request: Request) {
       .select("*", { count: "exact" })
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1)
+
+    if (!includeDeleted) {
+      query = query.or("is_deleted.is.null,is_deleted.eq.false")
+    }
 
     if (status) {
       query = query.eq("status", status)

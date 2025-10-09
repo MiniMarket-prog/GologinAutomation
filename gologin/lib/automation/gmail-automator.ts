@@ -11,6 +11,59 @@ export class GmailAutomator {
     this.behavior = new HumanBehavior(behaviorPattern)
   }
 
+  async ensureGmailLoaded() {
+    console.log("[v0] Ensuring Gmail is loaded...")
+
+    try {
+      const currentUrl = this.page.url()
+      console.log(`[v0] Current URL: ${currentUrl}`)
+
+      // Check if we're already on Gmail
+      if (currentUrl.includes("mail.google.com")) {
+        console.log("[v0] Already on Gmail, checking if logged in...")
+      } else {
+        console.log("[v0] Not on Gmail, navigating to inbox...")
+        await this.page.goto("https://mail.google.com/mail/u/0/#inbox", {
+          waitUntil: "networkidle2",
+          timeout: 30000,
+        })
+        await this.behavior.waitRandom(2000)
+      }
+
+      // Check if logged in
+      console.log("[v0] Checking if logged into Gmail...")
+      const isLoggedIn = await this.page.evaluate(() => {
+        const hasComposeButton = !!document.querySelector('[gh="cm"]')
+        const hasInboxLabel =
+          !!document.querySelector('[aria-label*="Inbox"]') || !!document.querySelector('[title*="Inbox"]')
+        const hasLoginForm =
+          !!document.querySelector('input[type="email"]') || !!document.querySelector('input[type="password"]')
+
+        return {
+          hasComposeButton,
+          hasInboxLabel,
+          hasLoginForm,
+          isLoggedIn: (hasComposeButton || hasInboxLabel) && !hasLoginForm,
+        }
+      })
+
+      console.log("[v0] Login status:", JSON.stringify(isLoggedIn, null, 2))
+
+      if (!isLoggedIn.isLoggedIn) {
+        throw new Error(
+          "Not logged into Gmail. Please ensure the GoLogin profile has Gmail credentials saved or login manually first.",
+        )
+      }
+
+      console.log("[v0] ✓ Gmail is loaded and user is logged in")
+      return { success: true }
+    } catch (error: any) {
+      console.error("[v0] ❌ Failed to ensure Gmail is loaded")
+      console.error("[v0] Error:", error.message)
+      throw error
+    }
+  }
+
   async login(email: string, password: string) {
     console.log("[v0] Starting Gmail login with human behavior")
     console.log(`[v0] Email: ${email}`)

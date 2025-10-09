@@ -14,6 +14,8 @@ export async function handleReportToInbox(
 
   console.log(`[v0] Search query: ${config.search_query}`)
 
+  await gmailAutomator.ensureGmailLoaded()
+
   const result = await gmailAutomator.reportToInbox(config.search_query)
 
   if (!result.success) {

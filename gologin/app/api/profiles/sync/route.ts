@@ -93,6 +93,8 @@ export async function POST() {
         folder_name: folderName,
         assigned_user_id: userId,
         status: "idle",
+        is_deleted: false,
+        deleted_at: null,
       }
     })
 
@@ -135,10 +137,54 @@ export async function POST() {
 
     console.log(`[v0] Successfully synced ${data?.length || uniqueProfiles.length} profiles`)
 
+    const gologinProfileIds = gologinProfiles.map((p: any) => p.id)
+    console.log(`[v0] Checking for deleted profiles not in GoLogin list of ${gologinProfileIds.length} IDs`)
+
+    // First, get all profiles that are not deleted
+    const { data: allProfiles } = await dbClient
+      .from("gologin_profiles")
+      .select("profile_id, profile_name")
+      .eq("is_deleted", false)
+
+    // Find profiles that exist in DB but not in GoLogin
+    const profilesToDelete = (allProfiles || []).filter(
+      (dbProfile: any) => !gologinProfileIds.includes(dbProfile.profile_id),
+    )
+
+    let deletedCount = 0
+    if (profilesToDelete.length > 0) {
+      const profileIdsToDelete = profilesToDelete.map((p: any) => p.profile_id)
+
+      const { data: deletedProfiles, error: deleteCheckError } = await (dbClient.from("gologin_profiles") as any)
+        .update({
+          is_deleted: true,
+          deleted_at: new Date().toISOString(),
+          status: "deleted",
+        })
+        .in("profile_id", profileIdsToDelete)
+        .select("profile_id, profile_name")
+
+      if (deleteCheckError) {
+        console.error("[v0] Error marking deleted profiles:", deleteCheckError)
+      } else {
+        deletedCount = deletedProfiles?.length || 0
+        console.log(`[v0] Marked ${deletedCount} profiles as deleted`)
+        if (deletedProfiles && deletedProfiles.length > 0) {
+          console.log(
+            "[v0] Deleted profiles:",
+            deletedProfiles.map((p: any) => `${p.profile_name} (${p.profile_id})`).join(", "),
+          )
+        }
+      }
+    } else {
+      console.log("[v0] No deleted profiles found")
+    }
+
     return NextResponse.json({
       success: true,
-      message: `Successfully synced ${data?.length || uniqueProfiles.length} profiles`,
-      count: data?.length || uniqueProfiles.length,
+      message: `Successfully synced ${data?.length || uniqueProfiles.length} profiles, marked ${deletedCount} as deleted`,
+      synced: data?.length || uniqueProfiles.length,
+      deleted: deletedCount,
     })
   } catch (error) {
     console.error("[v0] Error syncing profiles:", error)

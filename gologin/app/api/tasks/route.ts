@@ -10,6 +10,8 @@ export async function GET(request: Request) {
     const profileId = searchParams.get("profile_id")
     const search = searchParams.get("search")
     const limit = Number.parseInt(searchParams.get("limit") || "100")
+    const dateFrom = searchParams.get("date_from")
+    const dateTo = searchParams.get("date_to")
 
     let query = supabase
       .from("automation_tasks")
@@ -31,6 +33,17 @@ export async function GET(request: Request) {
 
     if (profileId) {
       query = query.eq("profile_id", profileId)
+    }
+
+    if (dateFrom) {
+      query = query.gte("scheduled_at", dateFrom)
+    }
+
+    if (dateTo) {
+      // Add one day to include the entire end date
+      const endDate = new Date(dateTo)
+      endDate.setDate(endDate.getDate() + 1)
+      query = query.lt("scheduled_at", endDate.toISOString())
     }
 
     const { data, error } = await query

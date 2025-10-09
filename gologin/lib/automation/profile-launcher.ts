@@ -15,6 +15,42 @@ export class ProfileLauncher {
     this.mode = mode
   }
 
+  async validateProfile(profileId: string): Promise<{ valid: boolean; error?: string; errorType?: string }> {
+    try {
+      console.log(`[v0] Validating profile ${profileId} with GoLogin API...`)
+      await this.gologinAPI.getProfileStatus(profileId)
+      console.log(`[v0] ✓ Profile validation successful`)
+      return { valid: true }
+    } catch (error: any) {
+      console.error(`[v0] ❌ Profile validation failed:`, error.message)
+
+      // Check if it's a 404 error (profile deleted)
+      if (error.message.includes("404") || error.message.includes("not found") || error.message.includes("deleted")) {
+        return {
+          valid: false,
+          error: "Profile has been deleted from GoLogin",
+          errorType: "PROFILE_DELETED",
+        }
+      }
+
+      // Check if it's an auth error
+      if (error.message.includes("401") || error.message.includes("unauthorized")) {
+        return {
+          valid: false,
+          error: "GoLogin API authentication failed",
+          errorType: "AUTH_ERROR",
+        }
+      }
+
+      // Generic error
+      return {
+        valid: false,
+        error: `Profile validation failed: ${error.message}`,
+        errorType: "VALIDATION_ERROR",
+      }
+    }
+  }
+
   async launchProfile(profileId: string) {
     console.log(`[v0] ========================================`)
     console.log(`[v0] Launching GoLogin profile: ${profileId}`)
@@ -43,6 +79,16 @@ export class ProfileLauncher {
         } catch (importError: any) {
           console.error(`[v0] ❌ Failed to load GoLogin SDK for local mode`)
           console.error(`[v0] Error: ${importError.message}`)
+
+          if (
+            importError.message &&
+            (importError.message.includes("404") ||
+              importError.message.includes("not found") ||
+              importError.message.includes("deleted"))
+          ) {
+            throw new Error("PROFILE_DELETED: Profile has been deleted from GoLogin")
+          }
+
           console.error(`[v0] Local mode requires running in a Node.js environment with GoLogin Desktop app installed`)
           throw new Error(
             "Local mode is not available in this environment. Please use Cloud mode or run the application locally with Node.js.",
@@ -84,7 +130,9 @@ export class ProfileLauncher {
       console.error(`[v0] Error message: ${error.message}`)
       console.error(`[v0] Error stack:`, error.stack)
       console.error(`[v0] ========================================`)
-      return { browser: null, page: null, success: false, error: error.message }
+
+      const errorType = error.message?.startsWith("PROFILE_DELETED:") ? "PROFILE_DELETED" : "LAUNCH_ERROR"
+      return { browser: null, page: null, success: false, error: error.message, errorType }
     }
   }
 

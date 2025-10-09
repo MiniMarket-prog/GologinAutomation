@@ -6,8 +6,13 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, AlertCircle, Search } from "lucide-react"
+import { Trash2, AlertCircle, Search, RotateCcw, Calendar, Loader2, StopCircle } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar as CalendarComponent } from "@/components/ui/calendar"
+import { format } from "date-fns"
 import type { AutomationTask } from "@/lib/types"
+import { useToast } from "@/hooks/use-toast"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
@@ -21,12 +26,20 @@ const statusColors = {
 export function TaskList() {
   const [filter, setFilter] = useState<string>("all")
   const [search, setSearch] = useState("")
+  const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
+  const [dateFrom, setDateFrom] = useState<Date>()
+  const [dateTo, setDateTo] = useState<Date>()
+  const [retrying, setRetrying] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const { toast } = useToast()
 
   const buildUrl = () => {
     const params = new URLSearchParams()
     if (filter !== "all") params.append("status", filter)
     params.append("limit", "100")
     if (search) params.append("search", search)
+    if (dateFrom) params.append("date_from", dateFrom.toISOString())
+    if (dateTo) params.append("date_to", dateTo.toISOString())
     return `/api/tasks?${params.toString()}`
   }
 
@@ -43,7 +56,101 @@ export function TaskList() {
     }
   }
 
+  const handleRetrySelected = async () => {
+    if (selectedTasks.size === 0) {
+      toast({
+        title: "No tasks selected",
+        description: "Please select tasks to retry",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setRetrying(true)
+    try {
+      const response = await fetch("/api/tasks/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_ids: Array.from(selectedTasks) }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) throw new Error(data.error || "Failed to retry tasks")
+
+      toast({
+        title: "Tasks retried",
+        description: `${data.count} task(s) have been reset to pending status`,
+      })
+
+      setSelectedTasks(new Set())
+      mutate()
+    } catch (error: any) {
+      console.error("[v0] Error retrying tasks:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to retry tasks",
+        variant: "destructive",
+      })
+    } finally {
+      setRetrying(false)
+    }
+  }
+
+  const handleStopRunning = async () => {
+    if (!confirm("Are you sure you want to stop all running tasks?")) return
+
+    setStopping(true)
+    try {
+      const response = await fetch("/api/tasks/stop-running", {
+        method: "POST",
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) throw new Error(data.error || "Failed to stop tasks")
+
+      toast({
+        title: "Tasks stopped",
+        description: data.message || "Running tasks have been stopped",
+      })
+
+      mutate()
+    } catch (error: any) {
+      console.error("[v0] Error stopping tasks:", error)
+      toast({
+        title: "Error",
+        description: error.message || "Failed to stop tasks",
+        variant: "destructive",
+      })
+    } finally {
+      setStopping(false)
+    }
+  }
+
+  const handleToggleAll = () => {
+    if (!tasks) return
+
+    if (selectedTasks.size === tasks.length) {
+      setSelectedTasks(new Set())
+    } else {
+      setSelectedTasks(new Set(tasks.map((t) => t.id)))
+    }
+  }
+
+  const handleToggleTask = (taskId: string) => {
+    const newSelected = new Set(selectedTasks)
+    if (newSelected.has(taskId)) {
+      newSelected.delete(taskId)
+    } else {
+      newSelected.add(taskId)
+    }
+    setSelectedTasks(newSelected)
+  }
+
   const tasks = data?.tasks as (AutomationTask & { profile_name?: string; folder_name?: string })[] | undefined
+
+  const hasRunningTasks = tasks?.some((t) => t.status === "running")
 
   return (
     <div className="space-y-4">
@@ -57,34 +164,115 @@ export function TaskList() {
             className="pl-9"
           />
         </div>
+
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" className="w-[240px] justify-start text-left font-normal bg-transparent">
+              <Calendar className="mr-2 h-4 w-4" />
+              {dateFrom ? (
+                dateTo ? (
+                  <>
+                    {format(dateFrom, "MMM dd")} - {format(dateTo, "MMM dd")}
+                  </>
+                ) : (
+                  format(dateFrom, "MMM dd, yyyy")
+                )
+              ) : (
+                <span>Filter by date</span>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="end">
+            <div className="p-3 space-y-2">
+              <div className="text-sm font-medium">From Date</div>
+              <CalendarComponent mode="single" selected={dateFrom} onSelect={setDateFrom} />
+              <div className="text-sm font-medium mt-2">To Date</div>
+              <CalendarComponent mode="single" selected={dateTo} onSelect={setDateTo} />
+              <div className="flex gap-2 pt-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setDateFrom(undefined)
+                    setDateTo(undefined)
+                  }}
+                  className="flex-1"
+                >
+                  Clear
+                </Button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
-      <div className="flex gap-2">
-        <Button variant={filter === "all" ? "default" : "outline"} size="sm" onClick={() => setFilter("all")}>
-          All
-        </Button>
-        <Button variant={filter === "pending" ? "default" : "outline"} size="sm" onClick={() => setFilter("pending")}>
-          Pending
-        </Button>
-        <Button variant={filter === "running" ? "default" : "outline"} size="sm" onClick={() => setFilter("running")}>
-          Running
-        </Button>
-        <Button
-          variant={filter === "completed" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setFilter("completed")}
-        >
-          Completed
-        </Button>
-        <Button variant={filter === "failed" ? "default" : "outline"} size="sm" onClick={() => setFilter("failed")}>
-          Failed
-        </Button>
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <Button variant={filter === "all" ? "default" : "outline"} size="sm" onClick={() => setFilter("all")}>
+            All
+          </Button>
+          <Button variant={filter === "pending" ? "default" : "outline"} size="sm" onClick={() => setFilter("pending")}>
+            Pending
+          </Button>
+          <Button variant={filter === "running" ? "default" : "outline"} size="sm" onClick={() => setFilter("running")}>
+            Running
+          </Button>
+          <Button
+            variant={filter === "completed" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setFilter("completed")}
+          >
+            Completed
+          </Button>
+          <Button variant={filter === "failed" ? "default" : "outline"} size="sm" onClick={() => setFilter("failed")}>
+            Failed
+          </Button>
+        </div>
+
+        <div className="flex gap-2">
+          {selectedTasks.size > 0 && (
+            <Button size="sm" onClick={handleRetrySelected} disabled={retrying}>
+              {retrying ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Retrying...
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Retry Selected ({selectedTasks.size})
+                </>
+              )}
+            </Button>
+          )}
+          {hasRunningTasks && (
+            <Button size="sm" variant="destructive" onClick={handleStopRunning} disabled={stopping}>
+              {stopping ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Stopping...
+                </>
+              ) : (
+                <>
+                  <StopCircle className="mr-2 h-4 w-4" />
+                  Stop Running Tasks
+                </>
+              )}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-[50px]">
+                <Checkbox
+                  checked={tasks && tasks.length > 0 && selectedTasks.size === tasks.length}
+                  onCheckedChange={handleToggleAll}
+                />
+              </TableHead>
               <TableHead>Task Type</TableHead>
               <TableHead>Profile Name</TableHead>
               <TableHead>Folder</TableHead>
@@ -97,13 +285,16 @@ export function TaskList() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   Loading tasks...
                 </TableCell>
               </TableRow>
             ) : tasks && tasks.length > 0 ? (
               tasks.map((task) => (
                 <TableRow key={task.id}>
+                  <TableCell>
+                    <Checkbox checked={selectedTasks.has(task.id)} onCheckedChange={() => handleToggleTask(task.id)} />
+                  </TableCell>
                   <TableCell className="font-medium">{task.task_type}</TableCell>
                   <TableCell className="text-muted-foreground">{task.profile_name || "Unknown"}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">{task.folder_name || "-"}</TableCell>
@@ -148,7 +339,7 @@ export function TaskList() {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   No tasks found
                 </TableCell>
               </TableRow>

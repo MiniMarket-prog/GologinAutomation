@@ -36,7 +36,17 @@ export class TaskExecutor {
     let browser: any = null
 
     try {
-      console.log(`[v0] Step 1: Launching profile...`)
+      console.log(`[v0] Step 1: Validating profile with GoLogin API...`)
+      const validation = await this.launcher.validateProfile(profile.profile_id)
+
+      if (!validation.valid) {
+        console.error(`[v0] ❌ Profile validation failed: ${validation.error}`)
+        throw new Error(`${validation.errorType}: ${validation.error}`)
+      }
+
+      console.log(`[v0] ✓ Profile validation successful`)
+
+      console.log(`[v0] Step 2: Launching profile...`)
       const launchResult = await this.launcher.launchProfile(profile.profile_id)
       browser = launchResult.browser
       const page = launchResult.page
@@ -44,16 +54,18 @@ export class TaskExecutor {
       if (!launchResult.success || !browser || !page) {
         const errorMsg = launchResult.error || "Failed to launch profile"
         console.error(`[v0] ❌ Profile launch failed: ${errorMsg}`)
-        throw new Error(errorMsg)
+
+        const errorType = (launchResult as any).errorType || "LAUNCH_ERROR"
+        throw new Error(`${errorType}: ${errorMsg}`)
       }
 
       console.log(`[v0] ✓ Profile launched successfully`)
 
-      console.log(`[v0] Step 2: Initializing Gmail automator...`)
+      console.log(`[v0] Step 3: Initializing Gmail automator...`)
       const gmailAutomator = new GmailAutomator(page, this.behaviorPattern)
       console.log(`[v0] ✓ Gmail automator ready`)
 
-      console.log(`[v0] Step 3: Executing task type: ${task.task_type}`)
+      console.log(`[v0] Step 4: Executing task type: ${task.task_type}`)
       switch (task.task_type) {
         case "login":
           result = await handleLogin(gmailAutomator, page, task.config)
@@ -114,14 +126,17 @@ export class TaskExecutor {
       console.error(`[v0] Error stack:`, error.stack)
       console.error(`[v0] ========================================`)
 
+      const errorType = error.message?.split(":")[0] || "UNKNOWN_ERROR"
+
       return {
         success: false,
         duration,
         error: error.message,
+        errorType: errorType,
       }
     } finally {
       if (browser) {
-        console.log(`[v0] Step 4: Closing profile...`)
+        console.log(`[v0] Step 5: Closing profile...`)
         try {
           await this.launcher.closeProfile(profile.profile_id, browser)
           console.log(`[v0] ✓ Profile closed`)

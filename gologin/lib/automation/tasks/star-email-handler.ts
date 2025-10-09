@@ -5,6 +5,8 @@ export async function handleStarEmail(gmailAutomator: GmailAutomator, page: Page
   const starCount = config?.count || 1
   console.log(`[v0] Starring ${starCount} email(s)...`)
 
+  await gmailAutomator.ensureGmailLoaded()
+
   const starResults = []
   let currentIndex = 0
   let starredCount = 0

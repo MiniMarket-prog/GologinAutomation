@@ -192,18 +192,36 @@ export class GoLoginAPI {
   }
 
   async getProfileStatus(profileId: string) {
-    const response = await fetch(`${this.baseUrl}/browser/${profileId}`, {
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-    })
+    try {
+      const response = await fetch(`${this.baseUrl}/browser/${profileId}`, {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+      })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Failed to get profile status: ${errorText}`)
+      if (!response.ok) {
+        const errorText = await response.text()
+
+        // Parse error response
+        let errorMessage = errorText
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.message || errorText
+        } catch {
+          // Keep original error text if not JSON
+        }
+
+        throw new Error(`${response.status}: ${errorMessage}`)
+      }
+
+      return response.json()
+    } catch (error: any) {
+      // Re-throw with more context
+      if (error.message) {
+        throw error
+      }
+      throw new Error(`Failed to get profile status: ${error}`)
     }
-
-    return response.json()
   }
 
   async getFolders() {

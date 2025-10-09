@@ -16,9 +16,11 @@ export interface GoLoginProfile {
   gmail_status?: "ok" | "blocked" | "password_required" | "verification_required" | "error" | "unknown" | null
   gmail_status_checked_at?: string | null
   gmail_status_message?: string | null
-  status: "idle" | "running" | "paused" | "error"
+  status: "idle" | "running" | "paused" | "error" | "deleted"
   last_run: string | null
   assigned_user_id: string | null
+  is_deleted?: boolean
+  deleted_at?: string | null
   created_at: string
   updated_at: string
 }

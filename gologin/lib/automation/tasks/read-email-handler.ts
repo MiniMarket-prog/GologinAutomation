@@ -5,6 +5,8 @@ export async function handleReadEmail(gmailAutomator: GmailAutomator, page: Page
   const readCount = config?.count || 1
   console.log(`[v0] Reading ${readCount} email(s)...`)
 
+  await gmailAutomator.ensureGmailLoaded()
+
   const readResults = []
   for (let i = 0; i < readCount; i++) {
     console.log(`[v0] Reading email ${i + 1}/${readCount} at index ${i}`)

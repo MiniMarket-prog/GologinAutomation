@@ -6,10 +6,16 @@ import { getEnvironmentMode } from "@/lib/utils/environment"
 
 export class TaskQueue {
   private isProcessing = false
+  private shouldStop = false
   private gologinApiKey: string
 
   constructor(gologinApiKey: string) {
     this.gologinApiKey = gologinApiKey
+  }
+
+  requestStop() {
+    console.log("[v0] ⚠️ Stop requested for task queue")
+    this.shouldStop = true
   }
 
   async processPendingTasks() {
@@ -19,6 +25,7 @@ export class TaskQueue {
     }
 
     this.isProcessing = true
+    this.shouldStop = false
     console.log("[v0] ========================================")
     console.log("[v0] Starting task queue processing")
     console.log("[v0] ========================================")
@@ -75,6 +82,12 @@ export class TaskQueue {
 
       // Process each task
       for (const task of tasks) {
+        if (this.shouldStop) {
+          console.log("[v0] ⚠️ Stop requested, aborting remaining tasks")
+          console.log(`[v0] Remaining tasks will stay in pending status`)
+          break
+        }
+
         await this.processTask(task, behaviorPattern, mode)
       }
 
@@ -88,6 +101,7 @@ export class TaskQueue {
       console.error("[v0] ========================================")
     } finally {
       this.isProcessing = false
+      this.shouldStop = false
     }
   }
 
@@ -100,23 +114,48 @@ export class TaskQueue {
     try {
       const supabase = await getSupabaseServerClient()
 
-      // Get profile
       console.log(`[v0] Fetching profile ${task.profile_id}...`)
-      const { data: profile, error: profileError } = await supabase
+      const { data: profiles, error: profileError } = await supabase
         .from("gologin_profiles")
         .select("*")
         .eq("id", task.profile_id)
-        .single()
 
       if (profileError) {
         console.error("[v0] ❌ Error fetching profile:", profileError)
-        throw profileError
+        throw new Error(`Database error fetching profile: ${profileError.message}`)
       }
+
+      if (!profiles || profiles.length === 0) {
+        console.error(`[v0] ❌ Profile ${task.profile_id} not found or not accessible`)
+        throw new Error(
+          `Profile ${task.profile_id} not found. It may have been deleted or you don't have access to it.`,
+        )
+      }
+
+      if (profiles.length > 1) {
+        console.error(`[v0] ❌ Multiple profiles found with ID ${task.profile_id}`)
+        throw new Error(`Data integrity error: Multiple profiles found with the same ID`)
+      }
+
+      const profile = profiles[0]
       console.log(`[v0] ✓ Profile loaded: ${profile.profile_name}`)
 
       // Check if profile is already running
       if (profile.status === "running") {
         console.log(`[v0] ⚠️ Profile ${profile.profile_name} is already running, skipping task`)
+        return
+      }
+
+      if (profile.status === "deleted") {
+        console.log(`[v0] ⚠️ Profile ${profile.profile_name} is marked as deleted, failing task`)
+        await supabase
+          .from("automation_tasks")
+          .update({
+            status: "failed",
+            completed_at: new Date().toISOString(),
+            error_message: "Profile has been deleted from GoLogin",
+          })
+          .eq("id", task.id)
         return
       }
 
@@ -147,6 +186,29 @@ export class TaskQueue {
         error: result.error || "none",
       })
 
+      if (!result.success && (result as any).errorType === "PROFILE_DELETED") {
+        console.log("[v0] ⚠️ Profile has been deleted from GoLogin, marking profile as deleted")
+        await supabase
+          .from("gologin_profiles")
+          .update({
+            status: "deleted",
+            last_run: new Date().toISOString(),
+          })
+          .eq("id", profile.id)
+
+        // Fail all pending tasks for this profile
+        console.log("[v0] Failing all pending tasks for deleted profile...")
+        await supabase
+          .from("automation_tasks")
+          .update({
+            status: "failed",
+            completed_at: new Date().toISOString(),
+            error_message: "Profile has been deleted from GoLogin",
+          })
+          .eq("profile_id", profile.id)
+          .eq("status", "pending")
+      }
+
       console.log("[v0] [DEBUG] Checking if task is check_gmail_status...")
       console.log("[v0] [DEBUG] Task type:", task.task_type)
       console.log("[v0] [DEBUG] Result object:", JSON.stringify(result, null, 2))
@@ -165,9 +227,7 @@ export class TaskQueue {
         })
 
         const adminClient = getSupabaseAdminClient()
-        // ts-expect-error - Supabase type inference issue with admin client
-        const { data: updateData, error: updateError } = await adminClient
-          .from("gologin_profiles")
+        const { data: updateData, error: updateError } = await (adminClient.from("gologin_profiles") as any)
           .update({
             gmail_status: gmailStatus,
             gmail_status_checked_at: new Date().toISOString(),
@@ -197,20 +257,22 @@ export class TaskQueue {
         .eq("id", task.id)
       console.log(`[v0] ✓ Task marked as ${result.success ? "completed" : "failed"}`)
 
-      // Update profile status and last run
-      console.log("[v0] Updating profile final status...")
-      await supabase
-        .from("gologin_profiles")
-        .update({
-          status: result.success ? "idle" : "error",
-          last_run: new Date().toISOString(),
-        })
-        .eq("id", profile.id)
-      console.log(`[v0] ✓ Profile status updated to ${result.success ? "idle" : "error"}`)
+      // Update profile status and last run (only if not deleted)
+      if ((result as any).errorType !== "PROFILE_DELETED") {
+        console.log("[v0] Updating profile final status...")
+        await supabase
+          .from("gologin_profiles")
+          .update({
+            status: result.success ? "idle" : "error",
+            last_run: new Date().toISOString(),
+          })
+          .eq("id", profile.id)
+        console.log(`[v0] ✓ Profile status updated to ${result.success ? "idle" : "error"}`)
+      }
 
-      // Log activity
       console.log("[v0] Creating activity log...")
-      await supabase.from("activity_logs").insert({
+      const adminClient = getSupabaseAdminClient()
+      const { error: activityError } = await (adminClient.from("activity_logs") as any).insert({
         profile_id: profile.id,
         task_id: task.id,
         action: task.task_type,
@@ -218,7 +280,12 @@ export class TaskQueue {
         duration_ms: result.duration,
         success: result.success,
       })
-      console.log("[v0] ✓ Activity logged")
+
+      if (activityError) {
+        console.error("[v0] ❌ Error creating activity log:", activityError)
+      } else {
+        console.log("[v0] ✓ Activity log created successfully")
+      }
 
       console.log(`[v0] ========================================`)
       console.log(

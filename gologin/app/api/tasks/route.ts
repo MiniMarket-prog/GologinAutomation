@@ -10,8 +10,6 @@ export async function GET(request: Request) {
     const profileId = searchParams.get("profile_id")
     const search = searchParams.get("search")
     const limit = Number.parseInt(searchParams.get("limit") || "100")
-    const dateFrom = searchParams.get("date_from")
-    const dateTo = searchParams.get("date_to")
 
     let query = supabase
       .from("automation_tasks")
@@ -20,7 +18,10 @@ export async function GET(request: Request) {
         *,
         gologin_profiles (
           profile_name,
-          folder_name
+          folder_name,
+          gmail_status,
+          gmail_status_checked_at,
+          gmail_status_message
         )
       `,
       )
@@ -35,17 +36,6 @@ export async function GET(request: Request) {
       query = query.eq("profile_id", profileId)
     }
 
-    if (dateFrom) {
-      query = query.gte("scheduled_at", dateFrom)
-    }
-
-    if (dateTo) {
-      // Add one day to include the entire end date
-      const endDate = new Date(dateTo)
-      endDate.setDate(endDate.getDate() + 1)
-      query = query.lt("scheduled_at", endDate.toISOString())
-    }
-
     const { data, error } = await query
 
     if (error) throw error
@@ -54,6 +44,9 @@ export async function GET(request: Request) {
       ...task,
       profile_name: task.gologin_profiles?.profile_name || "Unknown Profile",
       folder_name: task.gologin_profiles?.folder_name || null,
+      gmail_status: task.gologin_profiles?.gmail_status || null,
+      gmail_status_checked_at: task.gologin_profiles?.gmail_status_checked_at || null,
+      gmail_status_message: task.gologin_profiles?.gmail_status_message || null,
     }))
 
     if (search && tasksWithProfileData) {

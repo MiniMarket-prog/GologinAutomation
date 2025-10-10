@@ -5,14 +5,21 @@ export async function POST(request: Request) {
   try {
     const supabase = await getSupabaseServerClient()
     const body = await request.json()
+
     const { task_ids } = body
 
-    if (!task_ids || !Array.isArray(task_ids) || task_ids.length === 0) {
-      return NextResponse.json({ error: "Invalid task_ids" }, { status: 400 })
+    if (!Array.isArray(task_ids) || task_ids.length === 0) {
+      return NextResponse.json({ error: "Invalid task_ids array" }, { status: 400 })
+    }
+
+    // Get current user
+    const { data: userData } = await supabase.auth.getUser()
+    if (!userData.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     // Reset tasks to pending status
-    const { data, error } = await supabase
+    const { data, error, count } = await supabase
       .from("automation_tasks")
       .update({
         status: "pending",
@@ -22,18 +29,23 @@ export async function POST(request: Request) {
         scheduled_at: new Date().toISOString(),
       })
       .in("id", task_ids)
+      .eq("created_by", userData.user.id) // Only allow retrying own tasks
       .select()
 
-    if (error) throw error
+    if (error) {
+      console.error("[v0] Error retrying tasks:", error)
+      throw error
+    }
+
+    console.log(`[v0] Retried ${count || 0} tasks for user ${userData.user.email}`)
 
     return NextResponse.json({
       success: true,
       count: data?.length || 0,
-      message: `${data?.length || 0} task(s) reset to pending status`,
+      tasks: data,
     })
   } catch (error: any) {
     console.error("[v0] Error retrying tasks:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
-

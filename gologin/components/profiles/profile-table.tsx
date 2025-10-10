@@ -31,6 +31,7 @@ const statusColors = {
   running: "bg-green-500",
   paused: "bg-yellow-500",
   error: "bg-red-500",
+  deleted: "bg-gray-400",
 }
 
 const gmailStatusConfig = {
@@ -80,6 +81,16 @@ export function ProfileTable() {
       })
       .catch((err) => console.error("[v0] Error fetching folders:", err))
   }, [])
+
+  useEffect(() => {
+    const handleRefresh = () => {
+      console.log("[v0] Profiles refresh triggered by task completion")
+      mutate()
+    }
+
+    window.addEventListener("profiles-refresh", handleRefresh)
+    return () => window.removeEventListener("profiles-refresh", handleRefresh)
+  }, [mutate])
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this profile?")) return
@@ -173,6 +184,7 @@ export function ProfileTable() {
             <option value="running">Running</option>
             <option value="paused">Paused</option>
             <option value="error">Error</option>
+            <option value="deleted">Deleted</option>
           </select>
           <select
             value={gmailStatusFilter || "all"}

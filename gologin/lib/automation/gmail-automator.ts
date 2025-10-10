@@ -11,61 +11,8 @@ export class GmailAutomator {
     this.behavior = new HumanBehavior(behaviorPattern)
   }
 
-  async ensureGmailLoaded() {
-    console.log("[v0] Ensuring Gmail is loaded...")
-
-    try {
-      const currentUrl = this.page.url()
-      console.log(`[v0] Current URL: ${currentUrl}`)
-
-      // Check if we're already on Gmail
-      if (currentUrl.includes("mail.google.com")) {
-        console.log("[v0] Already on Gmail, checking if logged in...")
-      } else {
-        console.log("[v0] Not on Gmail, navigating to inbox...")
-        await this.page.goto("https://mail.google.com/mail/u/0/#inbox", {
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        })
-        await this.behavior.waitRandom(2000)
-      }
-
-      // Check if logged in
-      console.log("[v0] Checking if logged into Gmail...")
-      const isLoggedIn = await this.page.evaluate(() => {
-        const hasComposeButton = !!document.querySelector('[gh="cm"]')
-        const hasInboxLabel =
-          !!document.querySelector('[aria-label*="Inbox"]') || !!document.querySelector('[title*="Inbox"]')
-        const hasLoginForm =
-          !!document.querySelector('input[type="email"]') || !!document.querySelector('input[type="password"]')
-
-        return {
-          hasComposeButton,
-          hasInboxLabel,
-          hasLoginForm,
-          isLoggedIn: (hasComposeButton || hasInboxLabel) && !hasLoginForm,
-        }
-      })
-
-      console.log("[v0] Login status:", JSON.stringify(isLoggedIn, null, 2))
-
-      if (!isLoggedIn.isLoggedIn) {
-        throw new Error(
-          "Not logged into Gmail. Please ensure the GoLogin profile has Gmail credentials saved or login manually first.",
-        )
-      }
-
-      console.log("[v0] ✓ Gmail is loaded and user is logged in")
-      return { success: true }
-    } catch (error: any) {
-      console.error("[v0] ❌ Failed to ensure Gmail is loaded")
-      console.error("[v0] Error:", error.message)
-      throw error
-    }
-  }
-
-  async login(email: string, password: string) {
-    console.log("[v0] Starting Gmail login with human behavior")
+  async login(email: string, password: string): Promise<{ success: boolean; error?: string }> {
+    console.log("[v0] Starting Gmail login process...")
     console.log(`[v0] Email: ${email}`)
 
     try {
@@ -87,18 +34,65 @@ export class GmailAutomator {
       await this.behavior.randomPause()
       console.log("[v0] Typing email...")
       await this.behavior.typeWithHumanSpeed(email, emailInput)
+      console.log("[v0] ✓ Email entered")
+
       await this.behavior.waitRandom(1000)
 
-      // Click next
-      console.log("[v0] Clicking next button...")
-      const nextButton = await this.page.$("#identifierNext button")
-      if (nextButton) {
-        await nextButton.click()
-        console.log("[v0] ✓ Next button clicked")
-      } else {
+      // Click Next button - try multiple selectors
+      console.log("[v0] Looking for Next button...")
+      let nextButton: ElementHandle<Element> | null = null
+
+      // Try standard selectors first
+      const selectors = [
+        "#identifierNext button",
+        'button[type="button"]',
+        '[role="button"]',
+        ".VfPpkd-LgbsSe", // Google's button class
+      ]
+
+      for (const selector of selectors) {
+        try {
+          const btn = await this.page.$(selector)
+          if (btn) {
+            nextButton = btn as ElementHandle<Element>
+            console.log(`[v0] ✓ Found Next button with selector: ${selector}`)
+            break
+          }
+        } catch (e) {
+          continue
+        }
+      }
+
+      // If standard selectors fail, try finding by text content
+      if (!nextButton) {
+        console.log("[v0] Standard selectors failed, searching by text content...")
+        const buttons = await this.page.$$("button")
+        for (const button of buttons) {
+          const text = await button.evaluate((el) => el.textContent?.toLowerCase() || "")
+          // Check for "Next" in multiple languages
+          if (
+            text.includes("next") ||
+            text.includes("التالي") || // Arabic
+            text.includes("suivant") || // French
+            text.includes("siguiente") || // Spanish
+            text.includes("weiter") // German
+          ) {
+            nextButton = button as ElementHandle<Element>
+            console.log(`[v0] ✓ Found Next button by text: ${text}`)
+            break
+          }
+        }
+      }
+
+      if (!nextButton) {
         throw new Error("Next button not found")
       }
 
+      await this.behavior.randomPause()
+      await nextButton.click()
+      console.log("[v0] ✓ Clicked Next button")
+
+      // Wait for password page
       await this.behavior.waitRandom(3000)
 
       // Enter password
@@ -110,38 +104,75 @@ export class GmailAutomator {
       await this.behavior.randomPause()
       console.log("[v0] Typing password...")
       await this.behavior.typeWithHumanSpeed(password, passwordInput)
+      console.log("[v0] ✓ Password entered")
+
       await this.behavior.waitRandom(1000)
 
-      // Click next
-      console.log("[v0] Clicking password next button...")
-      const passwordNextButton = await this.page.$("#passwordNext button")
-      if (passwordNextButton) {
-        await passwordNextButton.click()
-        console.log("[v0] ✓ Password next button clicked")
+      // Click Next/Sign in button
+      console.log("[v0] Looking for Sign in button...")
+      let signInButton: ElementHandle<Element> | null = null
+
+      // Try standard selectors
+      for (const selector of selectors) {
+        try {
+          const btn = await this.page.$(selector)
+          if (btn) {
+            signInButton = btn as ElementHandle<Element>
+            console.log(`[v0] ✓ Found Sign in button with selector: ${selector}`)
+            break
+          }
+        } catch (e) {
+          continue
+        }
+      }
+
+      // If standard selectors fail, try finding by text
+      if (!signInButton) {
+        console.log("[v0] Standard selectors failed, searching by text content...")
+        const buttons = await this.page.$$("button")
+        for (const button of buttons) {
+          const text = await button.evaluate((el) => el.textContent?.toLowerCase() || "")
+          if (
+            text.includes("next") ||
+            text.includes("sign in") ||
+            text.includes("التالي") ||
+            text.includes("تسجيل الدخول") || // Arabic "Sign in"
+            text.includes("connexion") ||
+            text.includes("iniciar sesión") ||
+            text.includes("anmelden")
+          ) {
+            signInButton = button as ElementHandle<Element>
+            console.log(`[v0] ✓ Found Sign in button by text: ${text}`)
+            break
+          }
+        }
+      }
+
+      if (!signInButton) {
+        throw new Error("Sign in button not found")
+      }
+
+      await this.behavior.randomPause()
+      await signInButton.click()
+      console.log("[v0] ✓ Clicked Sign in button")
+
+      // Wait for navigation
+      await this.behavior.waitRandom(5000)
+
+      // Check if login was successful
+      const currentUrl = this.page.url()
+      if (currentUrl.includes("mail.google.com")) {
+        console.log("[v0] ✓ Login successful!")
+        return { success: true }
+      } else if (currentUrl.includes("challenge") || currentUrl.includes("verify")) {
+        console.log("[v0] ⚠ 2FA or verification required")
+        return { success: false, error: "2FA or verification required" }
       } else {
-        throw new Error("Password next button not found")
+        console.log("[v0] ✗ Login may have failed, unexpected URL:", currentUrl)
+        return { success: false }
       }
-
-      // Wait for Gmail to load
-      console.log("[v0] Waiting for Gmail to load...")
-      await this.page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
-      await this.behavior.waitRandom(2000)
-
-      console.log("[v0] ✓✓✓ Gmail login successful ✓✓✓")
-      return { success: true }
     } catch (error: any) {
-      console.error("[v0] ❌ Gmail login failed")
-      console.error("[v0] Error type:", error.name)
-      console.error("[v0] Error message:", error.message)
-      console.error("[v0] Error stack:", error.stack)
-
-      try {
-        const screenshot = await this.page.screenshot({ encoding: "base64" })
-        console.log("[v0] Screenshot captured (base64 length):", screenshot.length)
-      } catch (screenshotError) {
-        console.error("[v0] Could not capture screenshot:", screenshotError)
-      }
-
+      console.error("[v0] Login error:", error.message)
       return { success: false, error: error.message }
     }
   }

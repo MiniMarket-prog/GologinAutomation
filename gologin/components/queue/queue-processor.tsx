@@ -3,13 +3,16 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Play, Loader2, Trash2, StopCircle } from "lucide-react"
+import { Play, Loader2, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
-export function QueueProcessor() {
+interface QueueProcessorProps {
+  onProcessComplete?: () => void
+}
+
+export function QueueProcessor({ onProcessComplete }: QueueProcessorProps) {
   const [processing, setProcessing] = useState(false)
   const [clearing, setClearing] = useState(false)
-  const [stopping, setStopping] = useState(false)
   const [autoProcess, setAutoProcess] = useState(false)
   const { toast } = useToast()
 
@@ -30,6 +33,10 @@ export function QueueProcessor() {
         title: "Queue processed",
         description: "All pending tasks have been processed successfully.",
       })
+
+      if (onProcessComplete) {
+        onProcessComplete()
+      }
     } catch (error: any) {
       console.error("[v0] Error processing queue:", error)
       toast({
@@ -74,34 +81,6 @@ export function QueueProcessor() {
       })
     } finally {
       setClearing(false)
-    }
-  }
-
-  const handleStopQueue = async () => {
-    setStopping(true)
-
-    try {
-      // Stop the queue processor
-      const queueResponse = await fetch("/api/queue/stop", { method: "POST" })
-      const queueData = await queueResponse.json()
-
-      // Also stop any running tasks in the database
-      const tasksResponse = await fetch("/api/tasks/stop-running", { method: "POST" })
-      const tasksData = await tasksResponse.json()
-
-      toast({
-        title: "Stop requested",
-        description: "Queue will stop after current task completes",
-      })
-    } catch (error: any) {
-      console.error("[v0] Error stopping queue:", error)
-      toast({
-        title: "Error",
-        description: error.message || "Failed to stop queue",
-        variant: "destructive",
-      })
-    } finally {
-      setStopping(false)
     }
   }
 
@@ -154,20 +133,6 @@ export function QueueProcessor() {
             </Button>
           )}
 
-          <Button variant="destructive" onClick={handleStopQueue} disabled={stopping}>
-            {stopping ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Stopping...
-              </>
-            ) : (
-              <>
-                <StopCircle className="mr-2 h-4 w-4" />
-                Stop Queue
-              </>
-            )}
-          </Button>
-
           <Button variant="outline" onClick={handleClearPending} disabled={clearing} className="ml-auto bg-transparent">
             {clearing ? (
               <>
@@ -185,7 +150,7 @@ export function QueueProcessor() {
 
         <p className="text-xs text-muted-foreground">
           The queue processor will execute all pending tasks in order of priority and scheduled time. Auto-process runs
-          every minute while enabled. Use "Stop Queue" to abort processing after the current task completes.
+          every minute while enabled. Make sure you've saved your GoLogin API key in Settings.
         </p>
       </CardContent>
     </Card>

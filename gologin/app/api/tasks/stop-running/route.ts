@@ -1,27 +1,18 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 
-export async function POST(request: Request) {
+export async function POST() {
   try {
     const supabase = await getSupabaseServerClient()
 
-    // Get all running tasks
-    const { data: runningTasks, error: fetchError } = await supabase
-      .from("automation_tasks")
-      .select("id, profile_id")
-      .eq("status", "running")
-
-    if (fetchError) throw fetchError
-
-    if (!runningTasks || runningTasks.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: "No running tasks to stop",
-      })
+    // Get current user
+    const { data: userData } = await supabase.auth.getUser()
+    if (!userData.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Update tasks to failed status with cancellation message
-    const { error: updateTasksError } = await supabase
+    // Update all running tasks to failed status with a stop message
+    const { data, error, count } = await supabase
       .from("automation_tasks")
       .update({
         status: "failed",
@@ -29,22 +20,28 @@ export async function POST(request: Request) {
         error_message: "Task stopped by user",
       })
       .eq("status", "running")
+      .eq("created_by", userData.user.id) // Only stop own tasks
+      .select()
 
-    if (updateTasksError) throw updateTasksError
+    if (error) {
+      console.error("[v0] Error stopping running tasks:", error)
+      throw error
+    }
 
-    // Update profile statuses back to idle
-    const profileIds = runningTasks.map((t) => t.profile_id)
-    const { error: updateProfilesError } = await supabase
-      .from("gologin_profiles")
-      .update({ status: "idle" })
-      .in("id", profileIds)
+    // Also update any profiles that were running
+    if (data && data.length > 0) {
+      const profileIds = data.map((task: any) => task.profile_id).filter(Boolean)
+      if (profileIds.length > 0) {
+        await supabase.from("gologin_profiles").update({ status: "idle" }).in("id", profileIds)
+      }
+    }
 
-    if (updateProfilesError) throw updateProfilesError
+    console.log(`[v0] Stopped ${count || 0} running tasks for user ${userData.user.email}`)
 
     return NextResponse.json({
       success: true,
-      count: runningTasks.length,
-      message: `Stopped ${runningTasks.length} running task(s)`,
+      count: count || 0,
+      message: `Stopped ${count || 0} running task${count === 1 ? "" : "s"}`,
     })
   } catch (error: any) {
     console.error("[v0] Error stopping running tasks:", error)

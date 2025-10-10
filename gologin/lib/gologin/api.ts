@@ -192,36 +192,18 @@ export class GoLoginAPI {
   }
 
   async getProfileStatus(profileId: string) {
-    try {
-      const response = await fetch(`${this.baseUrl}/browser/${profileId}`, {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      })
+    const response = await fetch(`${this.baseUrl}/browser/${profileId}`, {
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    })
 
-      if (!response.ok) {
-        const errorText = await response.text()
-
-        // Parse error response
-        let errorMessage = errorText
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.message || errorText
-        } catch {
-          // Keep original error text if not JSON
-        }
-
-        throw new Error(`${response.status}: ${errorMessage}`)
-      }
-
-      return response.json()
-    } catch (error: any) {
-      // Re-throw with more context
-      if (error.message) {
-        throw error
-      }
-      throw new Error(`Failed to get profile status: ${error}`)
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Failed to get profile status: ${errorText}`)
     }
+
+    return response.json()
   }
 
   async getFolders() {
@@ -253,6 +235,112 @@ export class GoLoginAPI {
       return []
     }
   }
+
+  async createProfile(options: { name: string; folderName?: string }) {
+    try {
+      console.log(`[v0] Creating profile: ${options.name} in folder: ${options.folderName || "default"}`)
+
+      const osOptions = ["win", "mac", "lin"]
+      const randomOS = osOptions[Math.floor(Math.random() * osOptions.length)]
+
+      // Platform must match the OS
+      const platformMap: Record<string, string> = {
+        win: "Win32",
+        mac: "MacIntel",
+        lin: "Linux x86_64",
+      }
+
+      // Random resolutions
+      const resolutions = ["1920x1080", "1366x768", "1440x900", "1536x864", "1600x900", "2560x1440"]
+      const randomResolution = resolutions[Math.floor(Math.random() * resolutions.length)]
+
+      // Random languages
+      const languages = ["en-US", "en-GB", "es-ES", "fr-FR", "de-DE", "pt-BR"]
+      const randomLanguage = languages[Math.floor(Math.random() * languages.length)]
+
+      const body: any = {
+        name: options.name,
+        browserType: "chrome",
+        os: randomOS,
+        navigator: {
+          userAgent: "random",
+          resolution: randomResolution,
+          language: randomLanguage,
+          platform: platformMap[randomOS],
+        },
+        proxy: {
+          mode: "none",
+        },
+      }
+
+      // If folder name is provided, try to find the folder ID
+      if (options.folderName) {
+        const folders = await this.getFolders()
+        const folder = folders.find((f: any) => f.name === options.folderName)
+        if (folder) {
+          body.folderId = folder.id
+        }
+      }
+
+      const response = await fetch(`${this.baseUrl}/browser`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Failed to create profile: ${errorText}`)
+      }
+
+      const data = await response.json()
+      console.log(`[v0] ✓ Profile created successfully:`, data.id)
+
+      return data
+    } catch (error: any) {
+      console.error("[v0] Failed to create profile:", error.message)
+      throw new Error(`Failed to create profile in GoLogin: ${error.message}`)
+    }
+  }
+
+  async createFolder(name: string) {
+    try {
+      console.log(`[v0] Creating folder: ${name}`)
+
+      const response = await fetch(`${this.baseUrl}/folders`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name }),
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Failed to create folder: ${errorText}`)
+      }
+
+      const data = await response.json()
+      console.log(`[v0] ✓ Folder created successfully:`, data.id)
+
+      return data
+    } catch (error: any) {
+      console.error("[v0] Failed to create folder:", error.message)
+      throw new Error(`Failed to create folder in GoLogin: ${error.message}`)
+    }
+  }
 }
 
 export const gologinAPI = new GoLoginAPI(process.env.GOLOGIN_API_KEY || "")
+
+export async function createProfile(options: { name: string; folderName?: string }) {
+  return gologinAPI.createProfile(options)
+}
+
+export async function createFolder(name: string) {
+  return gologinAPI.createFolder(name)
+}

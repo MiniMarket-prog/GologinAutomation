@@ -91,7 +91,7 @@ export async function POST() {
         profile_id: profile.id,
         profile_name: profile.name || `Profile ${profile.id}`,
         folder_name: folderName,
-        assigned_user_id: userId,
+        assigned_user_id: null,
         status: "idle",
         is_deleted: false,
         deleted_at: null,
@@ -136,6 +136,40 @@ export async function POST() {
     }
 
     console.log(`[v0] Successfully synced ${data?.length || uniqueProfiles.length} profiles`)
+
+    console.log("[v0] Updating profile assignments based on folder assignments...")
+    const { data: folderAssignments } = await dbClient.from("user_folder_assignments").select("user_id, folder_name")
+    const assignments = (folderAssignments || []) as any[]
+
+    if (assignments.length > 0) {
+      console.log(`[v0] Found ${assignments.length} folder assignments`)
+
+      // Group assignments by folder for efficient lookup
+      const folderToUserMap = new Map<string, string>()
+      for (const assignment of assignments) {
+        folderToUserMap.set(assignment.folder_name, assignment.user_id)
+      }
+
+      console.log("[v0] Folder to user map:", Object.fromEntries(folderToUserMap))
+
+      // Update each profile's assigned_user_id based on its folder
+      for (const [folderName, userId] of Array.from(folderToUserMap.entries())) {
+        const { data: updatedProfiles, error: updateError } = await (dbClient.from("gologin_profiles") as any)
+          .update({ assigned_user_id: userId })
+          .eq("folder_name", folderName)
+          .select("profile_id, profile_name")
+
+        if (updateError) {
+          console.error(`[v0] Error updating profiles for folder ${folderName}:`, updateError)
+        } else {
+          console.log(
+            `[v0] Assigned ${updatedProfiles?.length || 0} profiles in folder "${folderName}" to user ${userId}`,
+          )
+        }
+      }
+    } else {
+      console.log("[v0] No folder assignments found - profiles will not be assigned to users")
+    }
 
     const gologinProfileIds = gologinProfiles.map((p: any) => p.id)
     console.log(`[v0] Checking for deleted profiles not in GoLogin list of ${gologinProfileIds.length} IDs`)

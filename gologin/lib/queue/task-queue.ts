@@ -7,9 +7,11 @@ import { getEnvironmentMode } from "@/lib/utils/environment"
 export class TaskQueue {
   private isProcessing = false
   private gologinApiKey: string
+  private maxConcurrentTasks: number
 
-  constructor(gologinApiKey: string) {
+  constructor(gologinApiKey: string, maxConcurrentTasks = 1) {
     this.gologinApiKey = gologinApiKey
+    this.maxConcurrentTasks = maxConcurrentTasks
   }
 
   async processPendingTasks() {
@@ -21,43 +23,28 @@ export class TaskQueue {
     this.isProcessing = true
     console.log("[v0] ========================================")
     console.log("[v0] Starting task queue processing")
+    console.log(`[v0] Max concurrent tasks: ${this.maxConcurrentTasks}`)
     console.log("[v0] ========================================")
 
     try {
       const adminClient = getSupabaseAdminClient()
       const supabase = await getSupabaseServerClient()
 
-      // Get pending tasks ordered by priority and scheduled time
+      const fetchLimit = Math.max(20, this.maxConcurrentTasks * 4)
       console.log("[v0] Fetching pending tasks...")
-      console.log("[v0] [DEBUG] Current time:", new Date().toISOString())
 
-      // First, let's see ALL pending tasks without filters
-      const { data: allPendingTasks, error: allTasksError } = await (adminClient.from("automation_tasks") as any)
-        .select("id, task_type, status, scheduled_at, profile_id")
-        .eq("status", "pending")
-
-      console.log("[v0] [DEBUG] All pending tasks in database:", allPendingTasks?.length || 0)
-      if (allPendingTasks && allPendingTasks.length > 0) {
-        allPendingTasks.forEach((t: any) => {
-          console.log(`[v0] [DEBUG]   - Task ${t.id}: ${t.task_type}, scheduled_at: ${t.scheduled_at || "NULL"}`)
-        })
-      }
-
-      // Now fetch tasks that should be processed (scheduled_at is NULL or <= now)
       const { data: tasks, error: tasksError } = await (adminClient.from("automation_tasks") as any)
         .select("*")
         .eq("status", "pending")
         .or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`)
         .order("priority", { ascending: false })
         .order("scheduled_at", { ascending: true, nullsFirst: true })
-        .limit(10)
+        .limit(fetchLimit)
 
       if (tasksError) {
         console.error("[v0] ❌ Error fetching tasks:", tasksError)
         throw tasksError
       }
-
-      console.log("[v0] [DEBUG] Tasks ready to process:", tasks?.length || 0)
 
       if (!tasks || tasks.length === 0) {
         console.log("[v0] No pending tasks to process")
@@ -65,7 +52,30 @@ export class TaskQueue {
       }
 
       console.log(`[v0] ✓ Found ${tasks.length} pending tasks`)
-      tasks.forEach((task: any, index: number) => {
+
+      // This prevents multiple processors from processing the same tasks
+      const taskIds = tasks.map((t: any) => t.id)
+      const { data: claimedTasks, error: claimError } = await (adminClient.from("automation_tasks") as any)
+        .update({
+          status: "running",
+          started_at: new Date().toISOString(),
+        })
+        .in("id", taskIds)
+        .eq("status", "pending") // Only update if still pending
+        .select()
+
+      if (claimError) {
+        console.error("[v0] ❌ Error claiming tasks:", claimError)
+        throw claimError
+      }
+
+      if (!claimedTasks || claimedTasks.length === 0) {
+        console.log("[v0] No tasks claimed (already being processed by another instance)")
+        return
+      }
+
+      console.log(`[v0] ✓ Successfully claimed ${claimedTasks.length} tasks for processing`)
+      claimedTasks.forEach((task: any, index: number) => {
         console.log(`[v0]   ${index + 1}. ${task.task_type} (ID: ${task.id})`)
       })
 
@@ -90,9 +100,16 @@ export class TaskQueue {
       const mode = getEnvironmentMode(userMode)
       console.log(`[v0] ✓ GoLogin mode: ${mode}`)
 
-      // Process each task
-      for (const task of tasks) {
-        await this.processTask(task, behaviorPattern, mode)
+      if (this.maxConcurrentTasks === 1) {
+        // Sequential processing (original behavior)
+        console.log("[v0] Processing tasks sequentially...")
+        for (const task of claimedTasks) {
+          await this.processTask(task, behaviorPattern, mode, true) // Pass skipStatusUpdate=true
+        }
+      } else {
+        // Concurrent processing with limit
+        console.log(`[v0] Processing tasks with concurrency limit of ${this.maxConcurrentTasks}...`)
+        await this.processConcurrent(claimedTasks, behaviorPattern, mode)
       }
 
       console.log("[v0] ========================================")
@@ -108,7 +125,40 @@ export class TaskQueue {
     }
   }
 
-  private async processTask(task: AutomationTask, behaviorPattern: BehaviorPattern, mode: "cloud" | "local") {
+  private async processConcurrent(tasks: AutomationTask[], behaviorPattern: BehaviorPattern, mode: "cloud" | "local") {
+    const activePromises = new Set<Promise<void>>()
+    let taskIndex = 0
+
+    while (taskIndex < tasks.length || activePromises.size > 0) {
+      // Start new tasks up to the concurrency limit
+      while (taskIndex < tasks.length && activePromises.size < this.maxConcurrentTasks) {
+        const task = tasks[taskIndex]
+        taskIndex++
+
+        const promise = this.processTask(task, behaviorPattern, mode, true) // Pass skipStatusUpdate=true
+          .catch((error) => {
+            console.error(`[v0] Error processing task ${task.id}:`, error)
+          })
+          .finally(() => {
+            activePromises.delete(promise)
+          })
+
+        activePromises.add(promise)
+      }
+
+      // Wait for at least one task to complete before continuing
+      if (activePromises.size > 0) {
+        await Promise.race(activePromises)
+      }
+    }
+  }
+
+  private async processTask(
+    task: AutomationTask,
+    behaviorPattern: BehaviorPattern,
+    mode: "cloud" | "local",
+    skipStatusUpdate = false,
+  ) {
     console.log(`[v0] ========================================`)
     console.log(`[v0] Processing task ${task.id}`)
     console.log(`[v0] Task type: ${task.task_type}`)
@@ -116,6 +166,20 @@ export class TaskQueue {
 
     try {
       const supabase = await getSupabaseServerClient()
+
+      if (!task.profile_id) {
+        console.log(`[v0] ⚠️ Task ${task.id} has no profile_id, marking as failed`)
+        await supabase
+          .from("automation_tasks")
+          .update({
+            status: "failed",
+            completed_at: new Date().toISOString(),
+            error_message: "Task cannot be processed without a profile",
+          })
+          .eq("id", task.id)
+        console.log(`[v0] ✓ Task marked as failed`)
+        return
+      }
 
       // Get profile
       console.log(`[v0] Fetching profile ${task.profile_id}...`)
@@ -131,22 +195,18 @@ export class TaskQueue {
       }
       console.log(`[v0] ✓ Profile loaded: ${profile.profile_name}`)
 
-      // Check if profile is already running
-      if (profile.status === "running") {
-        console.log(`[v0] ⚠️ Profile ${profile.profile_name} is already running, skipping task`)
-        return
+      if (!skipStatusUpdate) {
+        // Update task status to running
+        console.log("[v0] Updating task status to 'running'...")
+        await supabase
+          .from("automation_tasks")
+          .update({
+            status: "running",
+            started_at: new Date().toISOString(),
+          })
+          .eq("id", task.id)
+        console.log("[v0] ✓ Task status updated")
       }
-
-      // Update task status to running
-      console.log("[v0] Updating task status to 'running'...")
-      await supabase
-        .from("automation_tasks")
-        .update({
-          status: "running",
-          started_at: new Date().toISOString(),
-        })
-        .eq("id", task.id)
-      console.log("[v0] ✓ Task status updated")
 
       // Update profile status
       console.log("[v0] Updating profile status to 'running'...")
@@ -156,6 +216,7 @@ export class TaskQueue {
       console.log("[v0] [DEBUG] Task type:", task.task_type)
       console.log("[v0] [DEBUG] Profile gmail_email:", profile.gmail_email)
       console.log("[v0] [DEBUG] Profile gmail_password:", profile.gmail_password ? "***SET***" : "NOT SET")
+      console.log("[v0] [DEBUG] Profile recovery_email:", profile.recovery_email ? "***SET***" : "NOT SET")
       console.log("[v0] [DEBUG] Original task config:", JSON.stringify(task.config))
 
       const taskWithCredentials = { ...task }
@@ -165,10 +226,15 @@ export class TaskQueue {
           ...task.config,
           email: profile.gmail_email,
           password: profile.gmail_password,
+          ...(profile.recovery_email && { recovery_email: profile.recovery_email }),
         }
         console.log(
           "[v0] [DEBUG] Updated task config:",
-          JSON.stringify({ ...taskWithCredentials.config, password: "***HIDDEN***" }),
+          JSON.stringify({
+            ...taskWithCredentials.config,
+            password: "***HIDDEN***",
+            ...(taskWithCredentials.config.recovery_email && { recovery_email: "***HIDDEN***" }),
+          }),
         )
       } else {
         console.log("[v0] ⚠️ NOT adding credentials - conditions not met")
@@ -190,16 +256,34 @@ export class TaskQueue {
         error: result.error || "none",
       })
 
-      console.log("[v0] [DEBUG] Checking if task is check_gmail_status...")
+      console.log("[v0] [DEBUG] Checking if task is check_gmail_status or setup_gmail...")
       console.log("[v0] [DEBUG] Task type:", task.task_type)
       console.log("[v0] [DEBUG] Result object:", JSON.stringify(result, null, 2))
 
-      if (task.task_type === "check_gmail_status" && result.result) {
-        console.log("[v0] [DEBUG] Gmail status check detected, preparing profile update...")
+      if (
+        (task.task_type === "check_gmail_status" ||
+          task.task_type === "setup_gmail" ||
+          task.task_type === "check_inbox") &&
+        result.result
+      ) {
+        console.log("[v0] [DEBUG] Gmail task detected, preparing profile update...")
         console.log("[v0] [DEBUG] Result.result:", JSON.stringify(result.result, null, 2))
 
-        const gmailStatus = result.result.status
-        const gmailMessage = result.result.message
+        // For check_inbox, derive status from success
+        let gmailStatus: string
+        let gmailMessage: string | undefined
+
+        if (task.task_type === "check_inbox") {
+          // If check_inbox succeeded, Gmail is accessible
+          gmailStatus = result.success ? "ok" : "error"
+          gmailMessage = result.success
+            ? `Inbox checked successfully. ${result.result.unreadCount || 0} unread emails.`
+            : result.error || "Failed to check inbox"
+        } else {
+          // For check_gmail_status and setup_gmail, use the status from result
+          gmailStatus = result.result.status
+          gmailMessage = result.result.message
+        }
 
         console.log("[v0] [DEBUG] Updating profile with Gmail status:", {
           gmail_status: gmailStatus,
@@ -223,7 +307,7 @@ export class TaskQueue {
           console.log("[v0] [DEBUG] ✓ Gmail status updated successfully:", updateData)
         }
       } else {
-        console.log("[v0] [DEBUG] Not a Gmail status check task or no result data")
+        console.log("[v0] [DEBUG] Not a Gmail-related task or no result data")
       }
 
       // Update task status
@@ -246,7 +330,7 @@ export class TaskQueue {
           status: result.success ? "idle" : "error",
           last_run: new Date().toISOString(),
         })
-        .eq("id", profile.id)
+        .eq("id", task.profile_id)
       console.log(`[v0] ✓ Profile status updated to ${result.success ? "idle" : "error"}`)
 
       // Log activity

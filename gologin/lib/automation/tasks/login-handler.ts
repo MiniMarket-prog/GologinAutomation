@@ -25,15 +25,40 @@ export async function handleLogin(
   }
 
   try {
+    const browser = page.browser()
+    const pages = await browser.pages()
+    console.log(`[v0] Found ${pages.length} open tab(s)`)
+
+    console.log(`[v0] Opening Gmail in a new tab...`)
+    const gmailPage = await browser.newPage()
+    console.log(`[v0] ✓ New tab created for Gmail`)
+
     console.log("[v0] Navigating to Gmail inbox...")
-    await page.goto("https://mail.google.com/mail/u/0/#inbox", {
+    await gmailPage.goto("https://mail.google.com/mail/u/0/#inbox", {
       waitUntil: "networkidle2",
       timeout: 30000,
     })
     await new Promise((resolve) => setTimeout(resolve, 3000))
 
+    // Check if we got redirected to workspace.google.com (marketing page)
+    const currentUrl = gmailPage.url()
+    console.log(`[v0] Current URL after navigation: ${currentUrl}`)
+
+    if (currentUrl.includes("workspace.google.com")) {
+      console.log("[v0] ⚠️ Detected redirect to workspace.google.com marketing page")
+      console.log("[v0] Navigating to Gmail login page instead...")
+
+      await gmailPage.goto("https://accounts.google.com/signin/v2/identifier?service=mail", {
+        waitUntil: "networkidle2",
+        timeout: 30000,
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      console.log(`[v0] New URL: ${gmailPage.url()}`)
+    }
+
     console.log("[v0] Checking if logged into Gmail...")
-    const isLoggedIn = await page.evaluate(() => {
+    const isLoggedIn = await gmailPage.evaluate(() => {
       const hasComposeButton = !!document.querySelector('[gh="cm"]')
       const hasInboxLabel =
         !!document.querySelector('[aria-label*="Inbox"]') || !!document.querySelector('[title*="Inbox"]')
@@ -69,7 +94,7 @@ export async function handleLogin(
         })
 
         // Also listen for page close
-        page.on("close", () => {
+        gmailPage.on("close", () => {
           console.log(`[v0] ✓ Page closed`)
           resolve({
             success: true,

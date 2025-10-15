@@ -1,59 +1,56 @@
 import puppeteer from "puppeteer-core"
 import { GoLoginAPI } from "@/lib/gologin/api"
+import { LocalBrowserLauncher } from "./local-browser-launcher"
+import type { LocalProfileConfig } from "@/lib/types"
 
 export type LaunchMode = "cloud" | "local"
+export type ProfileType = "gologin" | "local"
 
 export class ProfileLauncher {
   private gologinAPI: GoLoginAPI
+  private localLauncher: LocalBrowserLauncher
   private apiKey: string
   private mode: LaunchMode
   private gologinInstance: any = null
 
   constructor(apiKey: string, mode: LaunchMode = "cloud") {
     this.gologinAPI = new GoLoginAPI(apiKey)
+    this.localLauncher = new LocalBrowserLauncher()
     this.apiKey = apiKey
     this.mode = mode
   }
 
-  async validateProfile(profileId: string): Promise<{ valid: boolean; error?: string; errorType?: string }> {
-    try {
-      console.log(`[v0] Validating profile ${profileId} with GoLogin API...`)
-      await this.gologinAPI.getProfileStatus(profileId)
-      console.log(`[v0] ✓ Profile validation successful`)
-      return { valid: true }
-    } catch (error: any) {
-      console.error(`[v0] ❌ Profile validation failed:`, error.message)
-
-      // Check if it's a 404 error (profile deleted)
-      if (error.message.includes("404") || error.message.includes("not found") || error.message.includes("deleted")) {
-        return {
-          valid: false,
-          error: "Profile has been deleted from GoLogin",
-          errorType: "PROFILE_DELETED",
-        }
-      }
-
-      // Check if it's an auth error
-      if (error.message.includes("401") || error.message.includes("unauthorized")) {
-        return {
-          valid: false,
-          error: "GoLogin API authentication failed",
-          errorType: "AUTH_ERROR",
-        }
-      }
-
-      // Generic error
-      return {
-        valid: false,
-        error: `Profile validation failed: ${error.message}`,
-        errorType: "VALIDATION_ERROR",
-      }
+  async launchProfileByType(
+    profileId: string,
+    profileType: ProfileType,
+    profileName?: string,
+    localConfig?: LocalProfileConfig,
+  ) {
+    if (profileType === "local") {
+      return this.launchLocalProfile(profileId, profileName || profileId, localConfig)
+    } else {
+      return this.launchProfile(profileId, profileName)
     }
   }
 
-  async launchProfile(profileId: string) {
+  async launchLocalProfile(profileId: string, profileName: string, config?: LocalProfileConfig) {
+    console.log(`[v0] Launching LOCAL browser profile (not GoLogin)`)
+    const profilePath = this.localLauncher.getUserDataDir(profileId)
     console.log(`[v0] ========================================`)
-    console.log(`[v0] Launching GoLogin profile: ${profileId}`)
+    console.log(`[v0] 📁 LOCAL PROFILE STORAGE LOCATION:`)
+    console.log(`[v0] ${profilePath}`)
+    console.log(`[v0] ========================================`)
+    console.log(`[v0] This is where your browser data (cookies, sessions, etc.) is saved`)
+    console.log(`[v0] Gmail login will persist across browser restarts`)
+    console.log(`[v0] ========================================`)
+    return this.localLauncher.launchProfile(profileId, profileName, config)
+  }
+
+  async launchProfile(profileId: string, profileName?: string) {
+    const displayName = profileName || profileId
+    console.log(`[v0] ========================================`)
+    console.log(`[v0] Launching GoLogin profile: ${displayName}`)
+    console.log(`[v0] Profile ID: ${profileId}`)
     console.log(`[v0] Mode: ${this.mode.toUpperCase()}`)
     console.log(`[v0] ========================================`)
 
@@ -79,16 +76,6 @@ export class ProfileLauncher {
         } catch (importError: any) {
           console.error(`[v0] ❌ Failed to load GoLogin SDK for local mode`)
           console.error(`[v0] Error: ${importError.message}`)
-
-          if (
-            importError.message &&
-            (importError.message.includes("404") ||
-              importError.message.includes("not found") ||
-              importError.message.includes("deleted"))
-          ) {
-            throw new Error("PROFILE_DELETED: Profile has been deleted from GoLogin")
-          }
-
           console.error(`[v0] Local mode requires running in a Node.js environment with GoLogin Desktop app installed`)
           throw new Error(
             "Local mode is not available in this environment. Please use Cloud mode or run the application locally with Node.js.",
@@ -119,25 +106,41 @@ export class ProfileLauncher {
       const page = pages[0] || (await browser.newPage())
 
       console.log(`[v0] ========================================`)
-      console.log(`[v0] ✓✓✓ Profile ${profileId} launched successfully in ${this.mode.toUpperCase()} mode ✓✓✓`)
+      console.log(
+        `[v0] ✓✓✓ Profile "${displayName}" (${profileId}) launched successfully in ${this.mode.toUpperCase()} mode ✓✓✓`,
+      )
       console.log(`[v0] ========================================`)
 
       return { browser, page, success: true }
     } catch (error: any) {
       console.error(`[v0] ========================================`)
-      console.error(`[v0] ❌ Failed to launch profile ${profileId}`)
+      console.error(`[v0] ❌ Failed to launch profile "${displayName}" (${profileId})`)
       console.error(`[v0] Error type: ${error.name}`)
       console.error(`[v0] Error message: ${error.message}`)
       console.error(`[v0] Error stack:`, error.stack)
       console.error(`[v0] ========================================`)
-
-      const errorType = error.message?.startsWith("PROFILE_DELETED:") ? "PROFILE_DELETED" : "LAUNCH_ERROR"
-      return { browser: null, page: null, success: false, error: error.message, errorType }
+      return { browser: null, page: null, success: false, error: error.message }
     }
   }
 
-  async closeProfile(profileId: string, browser: any) {
-    console.log(`[v0] Closing profile: ${profileId}`)
+  async closeProfileByType(profileId: string, profileType: ProfileType, browser: any, profileName?: string) {
+    if (profileType === "local") {
+      return this.closeLocalProfile(profileId, browser, profileName || profileId)
+    } else {
+      return this.closeProfile(profileId, browser, profileName)
+    }
+  }
+
+  async closeLocalProfile(profileId: string, browser: any, profileName: string) {
+    console.log(`[v0] Closing LOCAL browser profile (not GoLogin)`)
+    const profilePath = this.localLauncher.getUserDataDir(profileId)
+    console.log(`[v0] Profile data saved at: ${profilePath}`)
+    return this.localLauncher.closeProfile(profileId, browser, profileName)
+  }
+
+  async closeProfile(profileId: string, browser: any, profileName?: string) {
+    const displayName = profileName || profileId
+    console.log(`[v0] Closing profile: ${displayName} (${profileId})`)
 
     try {
       if (browser) {
@@ -155,7 +158,7 @@ export class ProfileLauncher {
         while (stopAttempts < maxAttempts) {
           try {
             await this.gologinAPI.stopProfile(profileId)
-            console.log(`[v0] ✓✓✓ Profile ${profileId} closed successfully ✓✓✓`)
+            console.log(`[v0] ✓ Profile stopped via API`)
             break
           } catch (error: any) {
             stopAttempts++
@@ -175,12 +178,23 @@ export class ProfileLauncher {
           console.log(`[v0] Profile may need to be manually stopped in GoLogin dashboard`)
         }
       } else {
-        console.log(`[v0] ✓ Profile closed`)
+        if (this.gologinInstance) {
+          console.log(`[v0] Stopping local profile...`)
+          try {
+            await this.gologinInstance.stopLocal({ profileId })
+            console.log(`[v0] ✓ Local profile stopped`)
+          } catch (error: any) {
+            console.error(`[v0] ⚠️ Error stopping local profile: ${error.message}`)
+          }
+        } else {
+          console.log(`[v0] ✓ Profile closed`)
+        }
       }
 
+      console.log(`[v0] ✓✓✓ Profile "${displayName}" (${profileId}) closed successfully ✓✓✓`)
       return { success: true }
     } catch (error: any) {
-      console.error(`[v0] ❌ Failed to close profile ${profileId}`)
+      console.error(`[v0] ❌ Failed to close profile "${displayName}" (${profileId})`)
       console.error(`[v0] Error:`, error.message)
       return { success: false, error: error.message }
     }

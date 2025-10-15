@@ -17,20 +17,30 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Plus, Upload, Loader2 } from "lucide-react"
+import { Plus, Upload, Loader2, Monitor, Cloud } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
 
 interface AddProfileDialogProps {
   onSuccess?: () => void
 }
 
+interface FolderWithType {
+  name: string
+  gologinCount: number
+  localCount: number
+  totalCount: number
+}
+
 export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [folders, setFolders] = useState<string[]>([])
+  const [folders, setFolders] = useState<FolderWithType[]>([])
   const [loadingFolders, setLoadingFolders] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [users, setUsers] = useState<Array<{ id: string; email: string }>>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
+  const [profileType, setProfileType] = useState<"gologin" | "local">("gologin")
 
-  // Single profile form
   const [singleForm, setSingleForm] = useState({
     email: "",
     password: "",
@@ -41,27 +51,50 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     autoGenerateFolderName: false,
     profileName: "",
     autoGenerateProfileName: true,
+    assignToUser: "",
+    userAgent: "",
+    proxyServer: "",
+    proxyUsername: "",
+    proxyPassword: "",
+    viewportWidth: "1366",
+    viewportHeight: "768",
+    windowWidth: "1366",
+    windowHeight: "768",
+    windowX: "",
+    windowY: "",
   })
 
-  // Bulk upload form
   const [bulkForm, setBulkForm] = useState({
     csvData: "",
     folderOption: "existing" as "existing" | "new",
     existingFolder: "",
     newFolderName: "",
     autoGenerateFolderName: false,
+    profileType: "gologin" as "gologin" | "local",
+    viewportWidth: "1366",
+    viewportHeight: "768",
+    userAgent: "",
+    proxyServer: "",
+    proxyUsername: "",
+    proxyPassword: "",
+    windowWidth: "1366",
+    windowHeight: "768",
+    windowX: "",
+    windowY: "",
   })
 
   const [bulkResults, setBulkResults] = useState<{
     created: number
     failed: number
+    skipped?: number
+    skippedEmails?: string[]
     errors: string[]
   } | null>(null)
 
-  // Load folders when dialog opens
   useEffect(() => {
     if (open) {
       loadFolders()
+      checkAdminStatus()
     }
   }, [open])
 
@@ -75,6 +108,33 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
       console.error("[v0] Error loading folders:", error)
     } finally {
       setLoadingFolders(false)
+    }
+  }
+
+  const checkAdminStatus = async () => {
+    try {
+      const response = await fetch("/api/auth/check-admin")
+      const data = await response.json()
+      setIsAdmin(data.isAdmin)
+
+      if (data.isAdmin) {
+        loadUsers()
+      }
+    } catch (error) {
+      console.error("[v0] Error checking admin status:", error)
+    }
+  }
+
+  const loadUsers = async () => {
+    setLoadingUsers(true)
+    try {
+      const response = await fetch("/api/users")
+      const data = await response.json()
+      setUsers(data.users || [])
+    } catch (error) {
+      console.error("[v0] Error loading users:", error)
+    } finally {
+      setLoadingUsers(false)
     }
   }
 
@@ -93,7 +153,6 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     setLoading(true)
 
     try {
-      // Determine folder name
       let folderName = ""
       if (singleForm.folderOption === "existing") {
         folderName = singleForm.existingFolder
@@ -101,21 +160,48 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         folderName = singleForm.autoGenerateFolderName ? generateFolderName() : singleForm.newFolderName
       }
 
-      // Determine profile name
       const profileName = singleForm.autoGenerateProfileName
         ? generateProfileName(singleForm.email)
         : singleForm.profileName
 
-      const response = await fetch("/api/profiles/create-with-setup", {
+      const endpoint = profileType === "local" ? "/api/profiles/create-local" : "/api/profiles/create-with-setup"
+
+      const body: any = {
+        email: singleForm.email,
+        password: singleForm.password,
+        recovery: singleForm.recovery,
+        folderName,
+        profileName,
+        ...(singleForm.assignToUser && { assignToUserEmail: singleForm.assignToUser }),
+      }
+
+      if (profileType === "local") {
+        body.localConfig = {
+          user_agent: singleForm.userAgent || undefined,
+          viewport: {
+            width: Number.parseInt(singleForm.viewportWidth) || 1366,
+            height: Number.parseInt(singleForm.viewportHeight) || 768,
+          },
+          window_size: {
+            width: Number.parseInt(singleForm.windowWidth) || 1366,
+            height: Number.parseInt(singleForm.windowHeight) || 768,
+            ...(singleForm.windowX && { x: Number.parseInt(singleForm.windowX) }),
+            ...(singleForm.windowY && { y: Number.parseInt(singleForm.windowY) }),
+          },
+          ...(singleForm.proxyServer && {
+            proxy: {
+              server: singleForm.proxyServer,
+              username: singleForm.proxyUsername || undefined,
+              password: singleForm.proxyPassword || undefined,
+            },
+          }),
+        }
+      }
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: singleForm.email,
-          password: singleForm.password,
-          recovery: singleForm.recovery,
-          folderName,
-          profileName,
-        }),
+        body: JSON.stringify(body),
       })
 
       if (!response.ok) {
@@ -134,6 +220,17 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         autoGenerateFolderName: false,
         profileName: "",
         autoGenerateProfileName: true,
+        assignToUser: "",
+        userAgent: "",
+        proxyServer: "",
+        proxyUsername: "",
+        proxyPassword: "",
+        viewportWidth: "1366",
+        viewportHeight: "768",
+        windowWidth: "1366",
+        windowHeight: "768",
+        windowX: "",
+        windowY: "",
       })
       onSuccess?.()
     } catch (error) {
@@ -150,7 +247,6 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     setBulkResults(null)
 
     try {
-      // Parse CSV data
       const lines = bulkForm.csvData.trim().split("\n")
       const profiles = lines
         .map((line) => {
@@ -163,7 +259,6 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         throw new Error("No valid profiles found in CSV data")
       }
 
-      // Determine folder name
       let folderName = ""
       if (bulkForm.folderOption === "existing") {
         folderName = bulkForm.existingFolder
@@ -171,13 +266,39 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         folderName = bulkForm.autoGenerateFolderName ? generateFolderName() : bulkForm.newFolderName
       }
 
+      const requestBody: any = {
+        profiles,
+        folderName,
+        profileType: bulkForm.profileType,
+      }
+
+      if (bulkForm.profileType === "local") {
+        requestBody.localConfig = {
+          viewport: {
+            width: Number.parseInt(bulkForm.viewportWidth) || 1366,
+            height: Number.parseInt(bulkForm.viewportHeight) || 768,
+          },
+          window_size: {
+            width: Number.parseInt(bulkForm.windowWidth) || 1366,
+            height: Number.parseInt(bulkForm.windowHeight) || 768,
+            ...(bulkForm.windowX && { x: Number.parseInt(bulkForm.windowX) }),
+            ...(bulkForm.windowY && { y: Number.parseInt(bulkForm.windowY) }),
+          },
+          ...(bulkForm.userAgent && { user_agent: bulkForm.userAgent }),
+          ...(bulkForm.proxyServer && {
+            proxy: {
+              server: bulkForm.proxyServer,
+              username: bulkForm.proxyUsername || undefined,
+              password: bulkForm.proxyPassword || undefined,
+            },
+          }),
+        }
+      }
+
       const response = await fetch("/api/profiles/bulk-create-with-setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          profiles,
-          folderName,
-        }),
+        body: JSON.stringify(requestBody),
       })
 
       if (!response.ok) {
@@ -188,13 +309,23 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
       const results = await response.json()
       setBulkResults(results)
 
-      // Reset form after successful bulk creation
       setBulkForm({
         csvData: "",
         folderOption: "existing",
         existingFolder: "",
         newFolderName: "",
         autoGenerateFolderName: false,
+        profileType: "gologin",
+        viewportWidth: "1366",
+        viewportHeight: "768",
+        userAgent: "",
+        proxyServer: "",
+        proxyUsername: "",
+        proxyPassword: "",
+        windowWidth: "1366",
+        windowHeight: "768",
+        windowX: "",
+        windowY: "",
       })
 
       onSuccess?.()
@@ -229,6 +360,65 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
           <TabsContent value="single">
             <form onSubmit={handleSingleSubmit} className="space-y-4">
               <div className="space-y-2">
+                <Label>Profile Type</Label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setProfileType("gologin")}
+                    className={`flex items-center gap-3 p-4 rounded-lg border-2 transition-colors ${
+                      profileType === "gologin"
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    <Cloud className="h-5 w-5" />
+                    <div className="text-left">
+                      <div className="font-medium">GoLogin</div>
+                      <div className="text-xs text-muted-foreground">Use GoLogin API</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setProfileType("local")}
+                    className={`flex items-center gap-3 p-4 rounded-lg border-2 transition-colors ${
+                      profileType === "local" ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    <Monitor className="h-5 w-5" />
+                    <div className="text-left">
+                      <div className="font-medium">Local Browser</div>
+                      <div className="text-xs text-muted-foreground">Use local Chrome</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {isAdmin && (
+                <div className="space-y-2">
+                  <Label>Assign To User (Optional)</Label>
+                  <Select
+                    value={singleForm.assignToUser}
+                    onValueChange={(value) => setSingleForm({ ...singleForm, assignToUser: value })}
+                    disabled={loadingUsers}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={loadingUsers ? "Loading users..." : "Select user (leave empty for yourself)"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {users.map((user) => (
+                        <SelectItem key={user.id} value={user.email}>
+                          {user.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground">Leave empty to assign to yourself</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
                 <Label htmlFor="email">Gmail Email *</Label>
                 <Input
                   id="email"
@@ -262,6 +452,128 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                 />
               </div>
 
+              {profileType === "local" && (
+                <div className="space-y-4 p-4 border rounded-lg bg-muted/50">
+                  <h4 className="font-medium text-sm">Local Browser Configuration (Optional)</h4>
+
+                  {/* Removed busterExtensionPath field */}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="userAgent">User Agent (Optional)</Label>
+                    <Input
+                      id="userAgent"
+                      value={singleForm.userAgent}
+                      onChange={(e) => setSingleForm({ ...singleForm, userAgent: e.target.value })}
+                      placeholder="Leave empty for default"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="viewportWidth">Viewport Width</Label>
+                      <Input
+                        id="viewportWidth"
+                        type="number"
+                        value={singleForm.viewportWidth}
+                        onChange={(e) => setSingleForm({ ...singleForm, viewportWidth: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="viewportHeight">Viewport Height</Label>
+                      <Input
+                        id="viewportHeight"
+                        type="number"
+                        value={singleForm.viewportHeight}
+                        onChange={(e) => setSingleForm({ ...singleForm, viewportHeight: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Window Size & Position</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Configure browser window size and position for multi-window setups
+                    </p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="windowWidth">Window Width</Label>
+                        <Input
+                          id="windowWidth"
+                          type="number"
+                          value={singleForm.windowWidth}
+                          onChange={(e) => setSingleForm({ ...singleForm, windowWidth: e.target.value })}
+                          placeholder="1366"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="windowHeight">Window Height</Label>
+                        <Input
+                          id="windowHeight"
+                          type="number"
+                          value={singleForm.windowHeight}
+                          onChange={(e) => setSingleForm({ ...singleForm, windowHeight: e.target.value })}
+                          placeholder="768"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="windowX">Window X Position (Optional)</Label>
+                        <Input
+                          id="windowX"
+                          type="number"
+                          value={singleForm.windowX}
+                          onChange={(e) => setSingleForm({ ...singleForm, windowX: e.target.value })}
+                          placeholder="0"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="windowY">Window Y Position (Optional)</Label>
+                        <Input
+                          id="windowY"
+                          type="number"
+                          value={singleForm.windowY}
+                          onChange={(e) => setSingleForm({ ...singleForm, windowY: e.target.value })}
+                          placeholder="0"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="proxyServer">Proxy Server (Optional)</Label>
+                    <Input
+                      id="proxyServer"
+                      value={singleForm.proxyServer}
+                      onChange={(e) => setSingleForm({ ...singleForm, proxyServer: e.target.value })}
+                      placeholder="http://proxy.example.com:8080"
+                    />
+                  </div>
+
+                  {singleForm.proxyServer && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="proxyUsername">Proxy Username</Label>
+                        <Input
+                          id="proxyUsername"
+                          value={singleForm.proxyUsername}
+                          onChange={(e) => setSingleForm({ ...singleForm, proxyUsername: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="proxyPassword">Proxy Password</Label>
+                        <Input
+                          id="proxyPassword"
+                          type="password"
+                          value={singleForm.proxyPassword}
+                          onChange={(e) => setSingleForm({ ...singleForm, proxyPassword: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label>Folder</Label>
                 <Select
@@ -291,8 +603,8 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                     </SelectTrigger>
                     <SelectContent>
                       {folders.map((folder) => (
-                        <SelectItem key={folder} value={folder}>
-                          {folder}
+                        <SelectItem key={folder.name || "no-folder"} value={folder.name || "no-folder"}>
+                          {folder.name || "No Folder"}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -367,6 +679,42 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
           <TabsContent value="bulk">
             <form onSubmit={handleBulkSubmit} className="space-y-4">
               <div className="space-y-2">
+                <Label>Profile Type</Label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setBulkForm({ ...bulkForm, profileType: "gologin" })}
+                    className={`flex items-center gap-3 p-4 rounded-lg border-2 transition-colors ${
+                      bulkForm.profileType === "gologin"
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    <Cloud className="h-5 w-5" />
+                    <div className="text-left">
+                      <div className="font-medium">GoLogin</div>
+                      <div className="text-xs text-muted-foreground">Use GoLogin API</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBulkForm({ ...bulkForm, profileType: "local" })}
+                    className={`flex items-center gap-3 p-4 rounded-lg border-2 transition-colors ${
+                      bulkForm.profileType === "local"
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    <Monitor className="h-5 w-5" />
+                    <div className="text-left">
+                      <div className="font-medium">Local Browser</div>
+                      <div className="text-xs text-muted-foreground">Use local Chrome</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="csvData">CSV Data *</Label>
                 <Textarea
                   id="csvData"
@@ -378,6 +726,128 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                 />
                 <p className="text-sm text-muted-foreground">Format: email,password,recovery (one per line)</p>
               </div>
+
+              {bulkForm.profileType === "local" && (
+                <div className="space-y-4 p-4 border rounded-lg bg-muted/50">
+                  <h4 className="font-medium text-sm">Local Browser Configuration (Applied to All Profiles)</h4>
+
+                  {/* Removed busterExtensionPath field */}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="bulkUserAgent">User Agent (Optional)</Label>
+                    <Input
+                      id="bulkUserAgent"
+                      value={bulkForm.userAgent}
+                      onChange={(e) => setBulkForm({ ...bulkForm, userAgent: e.target.value })}
+                      placeholder="Leave empty for default"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="bulkViewportWidth">Viewport Width</Label>
+                      <Input
+                        id="bulkViewportWidth"
+                        type="number"
+                        value={bulkForm.viewportWidth}
+                        onChange={(e) => setBulkForm({ ...bulkForm, viewportWidth: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="bulkViewportHeight">Viewport Height</Label>
+                      <Input
+                        id="bulkViewportHeight"
+                        type="number"
+                        value={bulkForm.viewportHeight}
+                        onChange={(e) => setBulkForm({ ...bulkForm, viewportHeight: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Window Size & Position</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Configure browser window size and position for multi-window setups
+                    </p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="bulkWindowWidth">Window Width</Label>
+                        <Input
+                          id="bulkWindowWidth"
+                          type="number"
+                          value={bulkForm.windowWidth}
+                          onChange={(e) => setBulkForm({ ...bulkForm, windowWidth: e.target.value })}
+                          placeholder="1366"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bulkWindowHeight">Window Height</Label>
+                        <Input
+                          id="bulkWindowHeight"
+                          type="number"
+                          value={bulkForm.windowHeight}
+                          onChange={(e) => setBulkForm({ ...bulkForm, windowHeight: e.target.value })}
+                          placeholder="768"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="bulkWindowX">Window X Position (Optional)</Label>
+                        <Input
+                          id="bulkWindowX"
+                          type="number"
+                          value={bulkForm.windowX}
+                          onChange={(e) => setBulkForm({ ...bulkForm, windowX: e.target.value })}
+                          placeholder="0"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bulkWindowY">Window Y Position (Optional)</Label>
+                        <Input
+                          id="bulkWindowY"
+                          type="number"
+                          value={bulkForm.windowY}
+                          onChange={(e) => setBulkForm({ ...bulkForm, windowY: e.target.value })}
+                          placeholder="0"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="bulkProxyServer">Proxy Server (Optional)</Label>
+                    <Input
+                      id="bulkProxyServer"
+                      value={bulkForm.proxyServer}
+                      onChange={(e) => setBulkForm({ ...bulkForm, proxyServer: e.target.value })}
+                      placeholder="http://proxy.example.com:8080"
+                    />
+                  </div>
+
+                  {bulkForm.proxyServer && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="bulkProxyUsername">Proxy Username</Label>
+                        <Input
+                          id="bulkProxyUsername"
+                          value={bulkForm.proxyUsername}
+                          onChange={(e) => setBulkForm({ ...bulkForm, proxyUsername: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bulkProxyPassword">Proxy Password</Label>
+                        <Input
+                          id="bulkProxyPassword"
+                          type="password"
+                          value={bulkForm.proxyPassword}
+                          onChange={(e) => setBulkForm({ ...bulkForm, proxyPassword: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label>Folder</Label>
@@ -408,8 +878,8 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                     </SelectTrigger>
                     <SelectContent>
                       {folders.map((folder) => (
-                        <SelectItem key={folder} value={folder}>
-                          {folder}
+                        <SelectItem key={folder.name || "no-folder"} value={folder.name || "no-folder"}>
+                          {folder.name || "No Folder"}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -447,7 +917,23 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                     <span className="text-green-600">Created: {bulkResults.created}</span>
                     {" | "}
                     <span className="text-red-600">Failed: {bulkResults.failed}</span>
+                    {bulkResults.skipped !== undefined && bulkResults.skipped > 0 && (
+                      <>
+                        {" | "}
+                        <span className="text-yellow-600">Skipped (already exist): {bulkResults.skipped}</span>
+                      </>
+                    )}
                   </p>
+                  {bulkResults.skippedEmails && bulkResults.skippedEmails.length > 0 && (
+                    <div className="text-sm text-yellow-600 space-y-1">
+                      <p className="font-medium">Skipped emails (already exist in database):</p>
+                      <div className="max-h-32 overflow-y-auto">
+                        {bulkResults.skippedEmails.map((email, i) => (
+                          <p key={i}>• {email}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {bulkResults.errors.length > 0 && (
                     <div className="text-sm text-red-600 space-y-1">
                       <p className="font-medium">Errors:</p>

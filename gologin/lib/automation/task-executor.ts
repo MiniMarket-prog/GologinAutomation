@@ -25,7 +25,8 @@ export class TaskExecutor {
     console.log(`[v0] Starting task execution`)
     console.log(`[v0] Task ID: ${task.id}`)
     console.log(`[v0] Task Type: ${task.task_type}`)
-    console.log(`[v0] Profile: ${profile.profile_name} (${profile.profile_id})`)
+    console.log(`[v0] Profile: ${profile.profile_name} (${profile.profile_id || "local"})`)
+    console.log(`[v0] Profile Type: ${profile.profile_type || "gologin"}`)
     if (task.config?.count) {
       console.log(`[v0] Action Count: ${task.config.count}`)
     }
@@ -36,36 +37,51 @@ export class TaskExecutor {
     let browser: any = null
 
     try {
-      console.log(`[v0] Step 1: Validating profile with GoLogin API...`)
-      const validation = await this.launcher.validateProfile(profile.profile_id)
+      console.log(`[v0] Step 1: Launching profile...`)
 
-      if (!validation.valid) {
-        console.error(`[v0] ❌ Profile validation failed: ${validation.error}`)
-        throw new Error(`${validation.errorType}: ${validation.error}`)
-      }
+      console.log(`[v0] [DEBUG] Profile data before launch:`)
+      console.log(`[v0] [DEBUG]   profile.id: ${profile.id}`)
+      console.log(`[v0] [DEBUG]   profile.profile_id: ${profile.profile_id}`)
+      console.log(`[v0] [DEBUG]   profile.profile_type: ${profile.profile_type}`)
+      console.log(`[v0] [DEBUG]   profile.profile_name: ${profile.profile_name}`)
 
-      console.log(`[v0] ✓ Profile validation successful`)
+      const profileType = profile.profile_type || "gologin"
+      const profileIdToUse = profile.profile_id || profile.id
 
-      console.log(`[v0] Step 2: Launching profile...`)
-      const launchResult = await this.launcher.launchProfile(profile.profile_id)
+      console.log(`[v0] [DEBUG] Computed values:`)
+      console.log(`[v0] [DEBUG]   profileType: ${profileType}`)
+      console.log(`[v0] [DEBUG]   profileIdToUse: ${profileIdToUse}`)
+
+      const launchResult = await this.launcher.launchProfileByType(
+        profileIdToUse,
+        profileType,
+        profile.profile_name,
+        profile.local_config || undefined,
+      )
+
       browser = launchResult.browser
       const page = launchResult.page
 
       if (!launchResult.success || !browser || !page) {
         const errorMsg = launchResult.error || "Failed to launch profile"
         console.error(`[v0] ❌ Profile launch failed: ${errorMsg}`)
-
-        const errorType = (launchResult as any).errorType || "LAUNCH_ERROR"
-        throw new Error(`${errorType}: ${errorMsg}`)
+        throw new Error(errorMsg)
       }
 
       console.log(`[v0] ✓ Profile launched successfully`)
 
-      console.log(`[v0] Step 3: Initializing Gmail automator...`)
+      console.log(`[v0] Step 2: Initializing Gmail automator...`)
       const gmailAutomator = new GmailAutomator(page, this.behaviorPattern)
       console.log(`[v0] ✓ Gmail automator ready`)
 
-      console.log(`[v0] Step 4: Executing task type: ${task.task_type}`)
+      console.log(`[v0] Step 3: Executing task type: ${task.task_type}`)
+      console.log(`[v0] [DEBUG] Task type received: "${task.task_type}"`)
+      console.log(`[v0] [DEBUG] Task type length: ${task.task_type.length}`)
+      console.log(
+        `[v0] [DEBUG] Task type charCodes:`,
+        Array.from(task.task_type).map((c) => c.charCodeAt(0)),
+      )
+
       switch (task.task_type) {
         case "login":
           result = await handleLogin(gmailAutomator, page, task.config)
@@ -96,10 +112,17 @@ export class TaskExecutor {
           break
 
         case "check_gmail_status":
+          console.log(`[v0] [DEBUG] Matched check_gmail_status case`)
+          result = await handleCheckGmail(gmailAutomator, task.config)
+          break
+
+        case "setup_gmail":
+          console.log(`[v0] [DEBUG] Matched setup_gmail case - using handleCheckGmail`)
           result = await handleCheckGmail(gmailAutomator, task.config)
           break
 
         default:
+          console.log(`[v0] [DEBUG] No case matched, falling to default`)
           throw new Error(`Unknown task type: ${task.task_type}`)
       }
 
@@ -126,19 +149,22 @@ export class TaskExecutor {
       console.error(`[v0] Error stack:`, error.stack)
       console.error(`[v0] ========================================`)
 
-      const errorType = error.message?.split(":")[0] || "UNKNOWN_ERROR"
-
       return {
         success: false,
         duration,
         error: error.message,
-        errorType: errorType,
       }
     } finally {
       if (browser) {
-        console.log(`[v0] Step 5: Closing profile...`)
+        console.log(`[v0] Step 4: Closing profile...`)
         try {
-          await this.launcher.closeProfile(profile.profile_id, browser)
+          const profileType = profile.profile_type || "gologin"
+          await this.launcher.closeProfileByType(
+            profile.profile_id || profile.id,
+            profileType,
+            browser,
+            profile.profile_name,
+          )
           console.log(`[v0] ✓ Profile closed`)
         } catch (closeError: any) {
           console.error(`[v0] ⚠️ Error during profile cleanup: ${closeError.message}`)

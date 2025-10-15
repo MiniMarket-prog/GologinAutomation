@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Play, Loader2, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 
 interface QueueProcessorProps {
   onProcessComplete?: () => void
@@ -14,6 +16,7 @@ export function QueueProcessor({ onProcessComplete }: QueueProcessorProps) {
   const [processing, setProcessing] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [autoProcess, setAutoProcess] = useState(false)
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(1)
   const { toast } = useToast()
 
   const handleProcess = async () => {
@@ -23,6 +26,7 @@ export function QueueProcessor({ onProcessComplete }: QueueProcessorProps) {
       const response = await fetch("/api/queue/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxConcurrentTasks }),
       })
 
       const data = await response.json()
@@ -31,7 +35,7 @@ export function QueueProcessor({ onProcessComplete }: QueueProcessorProps) {
 
       toast({
         title: "Queue processed",
-        description: "All pending tasks have been processed successfully.",
+        description: `Processed tasks with ${maxConcurrentTasks} concurrent window${maxConcurrentTasks > 1 ? "s" : ""}.`,
       })
 
       if (onProcessComplete) {
@@ -108,6 +112,23 @@ export function QueueProcessor({ onProcessComplete }: QueueProcessorProps) {
         <CardDescription>Process pending automation tasks using your saved API key</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="concurrency">Concurrent Windows</Label>
+          <Input
+            id="concurrency"
+            type="number"
+            min={1}
+            max={10}
+            value={maxConcurrentTasks}
+            onChange={(e) => setMaxConcurrentTasks(Math.max(1, Math.min(10, Number.parseInt(e.target.value) || 1)))}
+            className="w-32"
+          />
+          <p className="text-xs text-muted-foreground">
+            Number of browser windows to open simultaneously (1-10). Higher numbers process tasks faster but use more
+            resources.
+          </p>
+        </div>
+
         <div className="flex gap-2">
           <Button onClick={handleProcess} disabled={processing}>
             {processing ? (
@@ -149,8 +170,8 @@ export function QueueProcessor({ onProcessComplete }: QueueProcessorProps) {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          The queue processor will execute all pending tasks in order of priority and scheduled time. Auto-process runs
-          every minute while enabled. Make sure you've saved your GoLogin API key in Settings.
+          The queue processor will execute pending tasks with the specified concurrency. Auto-process runs every minute
+          while enabled. Make sure you've saved your GoLogin API key in Settings.
         </p>
       </CardContent>
     </Card>

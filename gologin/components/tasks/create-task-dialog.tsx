@@ -37,7 +37,7 @@ export function CreateTaskDialog() {
     config: {},
   })
 
-  const selectedProfile = profiles?.find((p) => p.id === formData.profile_id)
+  const selectedProfile = profiles?.find((p) => p.profile_id === formData.profile_id)
 
   const [actionCount, setActionCount] = useState(1)
   const [loginDuration, setLoginDuration] = useState(10)
@@ -53,6 +53,12 @@ export function CreateTaskDialog() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (!formData.profile_id) {
+      alert("Please select a profile before creating a task")
+      return
+    }
+
     setLoading(true)
 
     try {
@@ -127,7 +133,7 @@ export function CreateTaskDialog() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="profile">Profile</Label>
+              <Label htmlFor="profile">Profile *</Label>
               <div className="relative">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -151,6 +157,9 @@ export function CreateTaskDialog() {
                     )}
                   </div>
                 )}
+                {!selectedProfile && !showProfileList && (
+                  <p className="mt-1 text-xs text-muted-foreground">Click to search and select a profile (required)</p>
+                )}
                 {showProfileList && profiles && profiles.length > 0 && (
                   <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-popover shadow-md">
                     {profiles.map((profile) => (
@@ -158,16 +167,16 @@ export function CreateTaskDialog() {
                         key={profile.id}
                         type="button"
                         onClick={() => {
-                          setFormData({ ...formData, profile_id: profile.id })
+                          setFormData({ ...formData, profile_id: profile.profile_id })
                           setShowProfileList(false)
                           setProfileSearch("")
                         }}
                         className={cn(
                           "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
-                          formData.profile_id === profile.id && "bg-accent",
+                          formData.profile_id === profile.profile_id && "bg-accent",
                         )}
                       >
-                        {formData.profile_id === profile.id && <Check className="h-4 w-4" />}
+                        {formData.profile_id === profile.profile_id && <Check className="h-4 w-4" />}
                         <div className="flex-1">
                           <span className="font-medium">{profile.profile_name}</span>
                           {profile.folder_name && profile.folder_name !== "No Folder" && (
@@ -301,9 +310,12 @@ export function CreateTaskDialog() {
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || !formData.profile_id}>
               {loading ? "Creating..." : "Create Task"}
             </Button>
+            {!formData.profile_id && !loading && (
+              <p className="text-xs text-muted-foreground">Select a profile to enable task creation</p>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

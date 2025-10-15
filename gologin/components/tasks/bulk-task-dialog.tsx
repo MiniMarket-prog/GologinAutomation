@@ -37,6 +37,7 @@ export function BulkTaskDialog() {
   const [sequentialMode, setSequentialMode] = useState(false)
   const [waitForManualClose, setWaitForManualClose] = useState(false)
   const [selectedFolder, setSelectedFolder] = useState<string>("all")
+  const [selectedStatus, setSelectedStatus] = useState<string>("all")
 
   const supportsMultipleActions = ["star_email", "read_email", "delete_email", "reply_to_email"].includes(taskType)
 
@@ -46,13 +47,70 @@ export function BulkTaskDialog() {
     return Array.from(uniqueFolders).sort()
   }, [profiles])
 
-  const filteredProfiles = useMemo(() => {
+  const statuses = useMemo(() => {
     if (!profiles) return []
-    if (selectedFolder === "all") return profiles
-    return profiles.filter((p) => (p.folder_name || "No Folder") === selectedFolder)
+
+    let profilesToCount = profiles
+    if (selectedFolder !== "all") {
+      profilesToCount = profiles.filter((p) => (p.folder_name || "No Folder") === selectedFolder)
+    }
+
+    const allPossibleStatuses = [
+      "not_checked",
+      "ok",
+      "blocked",
+      "password_required",
+      "verification_required",
+      "waiting_for_recovery_email",
+      "error",
+      "unknown",
+    ]
+
+    const statusCounts = new Map<string, number>()
+
+    // Initialize all statuses with 0 count
+    allPossibleStatuses.forEach((status) => {
+      statusCounts.set(status, 0)
+    })
+
+    // Count actual profiles
+    profilesToCount.forEach((p) => {
+      const status = p.gmail_status === null ? "not_checked" : p.gmail_status || "unknown"
+      statusCounts.set(status, (statusCounts.get(status) || 0) + 1)
+    })
+
+    return allPossibleStatuses
+      .map((status) => ({ status, count: statusCounts.get(status) || 0 }))
+      .sort((a, b) => {
+        // Sort by count descending, then by status name
+        if (b.count !== a.count) return b.count - a.count
+        return a.status.localeCompare(b.status)
+      })
   }, [profiles, selectedFolder])
 
+  const filteredProfiles = useMemo(() => {
+    if (!profiles) return []
+    let filtered = profiles
+
+    if (selectedFolder !== "all") {
+      filtered = filtered.filter((p) => (p.folder_name || "No Folder") === selectedFolder)
+    }
+
+    if (selectedStatus !== "all") {
+      filtered = filtered.filter((p) => {
+        const profileStatus = p.gmail_status === null ? "not_checked" : p.gmail_status || "unknown"
+        return profileStatus === selectedStatus
+      })
+    }
+
+    return filtered
+  }, [profiles, selectedFolder, selectedStatus])
+
   const handleToggleProfile = (profileId: string) => {
+    if (!profileId) {
+      console.error("[v0] Attempted to toggle profile with null/undefined ID")
+      return
+    }
     setSelectedProfiles((prev) =>
       prev.includes(profileId) ? prev.filter((id) => id !== profileId) : [...prev, profileId],
     )
@@ -62,12 +120,26 @@ export function BulkTaskDialog() {
     if (selectedProfiles.length === filteredProfiles?.length) {
       setSelectedProfiles([])
     } else {
-      setSelectedProfiles(filteredProfiles?.map((p) => p.id) || [])
+      const validProfileIds = filteredProfiles?.map((p) => p.profile_id).filter((id) => id != null) || []
+      const uniqueProfileIds = Array.from(new Set(validProfileIds))
+      setSelectedProfiles(uniqueProfileIds)
     }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    const validProfileIds = Array.from(new Set(selectedProfiles.filter((id) => id != null)))
+
+    if (validProfileIds.length === 0) {
+      alert("Please select at least one valid profile")
+      return
+    }
+
+    if (validProfileIds.length !== selectedProfiles.length) {
+      console.warn("[v0] Removed duplicate or null profile IDs from selection")
+    }
+
     setLoading(true)
 
     try {
@@ -105,7 +177,7 @@ export function BulkTaskDialog() {
       }
 
       console.log("[v0] Creating bulk tasks with:", {
-        profile_ids: selectedProfiles,
+        profile_ids: validProfileIds,
         task_type: taskType,
         config,
         sequential: sequentialMode,
@@ -115,7 +187,7 @@ export function BulkTaskDialog() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          profile_ids: selectedProfiles,
+          profile_ids: validProfileIds,
           task_type: taskType,
           config,
           sequential: sequentialMode,
@@ -145,6 +217,22 @@ export function BulkTaskDialog() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const getStatusLabel = (status: string | null | undefined) => {
+    if (status === null || status === undefined || status === "not_checked") {
+      return "Not Checked"
+    }
+    const labels: Record<string, string> = {
+      ok: "OK",
+      blocked: "Blocked",
+      password_required: "Password Required",
+      verification_required: "Verification Required",
+      error: "Error",
+      unknown: "Unknown",
+      waiting_for_recovery_email: "Waiting for Recovery Email",
+    }
+    return labels[status] || status
   }
 
   return (
@@ -373,19 +461,42 @@ export function BulkTaskDialog() {
                 value={selectedFolder}
                 onChange={(e) => {
                   setSelectedFolder(e.target.value)
-                  setSelectedProfiles([]) // Clear selection when changing folder
+                  setSelectedProfiles([])
                 }}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="all">All Folders ({profiles?.length || 0} profiles)</option>
                 {folders.map((folder) => (
-                  <option key={folder} value={folder}>
+                  <option key={folder || "no-folder"} value={folder}>
                     {folder} ({profiles?.filter((p) => (p.folder_name || "No Folder") === folder).length || 0} profiles)
                   </option>
                 ))}
               </select>
               <p className="text-xs text-muted-foreground">
                 Filter profiles by folder to easily select profiles from specific teams or groups
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="status_filter">Filter by Status</Label>
+              <select
+                id="status_filter"
+                value={selectedStatus}
+                onChange={(e) => {
+                  setSelectedStatus(e.target.value)
+                  setSelectedProfiles([])
+                }}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="all">All Statuses ({profiles?.length || 0} profiles)</option>
+                {statuses.map(({ status, count }) => (
+                  <option key={status} value={status}>
+                    {getStatusLabel(status)} ({count} profiles)
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Filter profiles by their Gmail account status (ok, blocked, etc.)
               </p>
             </div>
 
@@ -398,25 +509,47 @@ export function BulkTaskDialog() {
               </div>
               <div className="max-h-64 space-y-2 overflow-y-auto rounded-md border border-input p-4">
                 {filteredProfiles?.map((profile) => (
-                  <div key={profile.id} className="flex items-center space-x-2">
+                  <div
+                    key={profile.profile_id || `profile-${profile.profile_name}`}
+                    className="flex items-center space-x-2"
+                  >
                     <Checkbox
-                      id={profile.id}
-                      checked={selectedProfiles.includes(profile.id)}
-                      onCheckedChange={() => handleToggleProfile(profile.id)}
+                      id={profile.profile_id ?? undefined}
+                      checked={profile.profile_id ? selectedProfiles.includes(profile.profile_id) : false}
+                      onCheckedChange={() => profile.profile_id && handleToggleProfile(profile.profile_id)}
+                      disabled={!profile.profile_id}
                     />
                     <label
-                      htmlFor={profile.id}
+                      htmlFor={profile.profile_id ?? undefined}
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
                       {profile.profile_name} {profile.gmail_email && `(${profile.gmail_email})`}
                       {profile.folder_name && (
                         <span className="ml-2 text-xs text-muted-foreground">({profile.folder_name})</span>
                       )}
+                      <span
+                        className={`ml-2 text-xs ${
+                          profile.gmail_status === "ok"
+                            ? "text-green-600"
+                            : profile.gmail_status === "blocked"
+                              ? "text-red-600"
+                              : profile.gmail_status === "error"
+                                ? "text-red-600"
+                                : profile.gmail_status === null
+                                  ? "text-gray-500"
+                                  : "text-yellow-600"
+                        }`}
+                      >
+                        [{getStatusLabel(profile.gmail_status)}]
+                      </span>
+                      {!profile.profile_id && <span className="ml-2 text-xs text-red-500">(Invalid - No ID)</span>}
                     </label>
                   </div>
                 ))}
                 {filteredProfiles?.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">No profiles in this folder</p>
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No profiles match the selected filters
+                  </p>
                 )}
               </div>
             </div>

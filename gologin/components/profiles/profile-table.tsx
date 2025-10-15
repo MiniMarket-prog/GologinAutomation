@@ -20,6 +20,8 @@ import {
   HelpCircle,
   Clock,
   ExternalLink,
+  Monitor,
+  Cloud,
 } from "lucide-react"
 import { AddProfileDialog } from "@/components/profiles/add-profile-dialog"
 import { SyncProfilesDialog } from "@/components/profiles/sync-profiles-dialog"
@@ -43,13 +45,20 @@ const gmailStatusConfig = {
   unknown: { color: "bg-gray-500", icon: HelpCircle, label: "Unknown" },
 }
 
+interface FolderWithType {
+  name: string
+  gologinCount: number
+  localCount: number
+  totalCount: number
+}
+
 export function ProfileTable() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>()
   const [gmailStatusFilter, setGmailStatusFilter] = useState<string>()
   const [folderFilter, setFolderFilter] = useState<string>()
-  const [folders, setFolders] = useState<string[]>([])
+  const [folders, setFolders] = useState<FolderWithType[]>([])
   const [launchingProfiles, setLaunchingProfiles] = useState<Set<string>>(new Set())
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
 
@@ -65,9 +74,15 @@ export function ProfileTable() {
   useEffect(() => {
     const checkAdmin = async () => {
       const supabase = getSupabaseBrowserClient()
-      const { data } = await supabase.auth.getUser()
-      if (data.user) {
-        setIsAdmin(data.user.user_metadata?.role === "admin")
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (user) {
+        // Query the users table to get the role (consistent with server-side check)
+        const { data: userData } = await supabase.from("users").select("role").eq("email", user.email).single()
+
+        setIsAdmin(userData?.role === "admin")
       }
     }
     checkAdmin()
@@ -169,8 +184,8 @@ export function ProfileTable() {
           >
             <option value="all">All Folders</option>
             {folders.map((folder) => (
-              <option key={folder} value={folder}>
-                📁 {folder}
+              <option key={folder.name || "no-folder"} value={folder.name}>
+                📁 {folder.name}
               </option>
             ))}
           </select>
@@ -211,6 +226,7 @@ export function ProfileTable() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Type</TableHead>
               <TableHead>Profile Name</TableHead>
               <TableHead>Folder</TableHead>
               <TableHead>Gmail Email</TableHead>
@@ -223,7 +239,7 @@ export function ProfileTable() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   Loading profiles...
                 </TableCell>
               </TableRow>
@@ -233,10 +249,23 @@ export function ProfileTable() {
                 const statusConfig =
                   gmailStatusConfig[gmailStatus as keyof typeof gmailStatusConfig] || gmailStatusConfig.unknown
                 const StatusIcon = statusConfig.icon
-                const isLaunching = launchingProfiles.has(profile.id) // Check if profile is launching
+                const isLaunching = launchingProfiles.has(profile.id)
 
                 return (
-                  <TableRow key={profile.id}>
+                  <TableRow key={profile.id || profile.profile_id || `profile-${Math.random()}`}>
+                    <TableCell>
+                      {profile.profile_type === "local" ? (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Monitor className="h-3.5 w-3.5" />
+                          <span className="text-xs">Local</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Cloud className="h-3.5 w-3.5" />
+                          <span className="text-xs">GoLogin</span>
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell className="font-medium">{profile.profile_name}</TableCell>
                     <TableCell>
                       {profile.folder_name ? (
@@ -315,7 +344,7 @@ export function ProfileTable() {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   No profiles found
                 </TableCell>
               </TableRow>

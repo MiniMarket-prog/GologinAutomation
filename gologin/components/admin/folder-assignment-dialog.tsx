@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-
+import { Monitor, Cloud } from "lucide-react"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -16,9 +16,16 @@ interface FolderAssignmentDialogProps {
   onSuccess: () => void
 }
 
+interface FolderWithType {
+  name: string
+  gologinCount: number
+  localCount: number
+  totalCount: number
+}
+
 export function FolderAssignmentDialog({ open, onOpenChange, user, onSuccess }: FolderAssignmentDialogProps) {
   const [loading, setLoading] = useState(false)
-  const [folders, setFolders] = useState<string[]>([])
+  const [folders, setFolders] = useState<FolderWithType[]>([])
   const [selectedFolders, setSelectedFolders] = useState<string[]>([])
 
   useEffect(() => {
@@ -96,14 +103,28 @@ export function FolderAssignmentDialog({ open, onOpenChange, user, onSuccess }: 
             <div className="space-y-3">
               {folders.length > 0 ? (
                 folders.map((folder) => (
-                  <div key={folder} className="flex items-center space-x-2">
+                  <div key={folder.name || "no-folder"} className="flex items-center space-x-2">
                     <Checkbox
-                      id={folder}
-                      checked={selectedFolders.includes(folder)}
-                      onCheckedChange={() => handleToggleFolder(folder)}
+                      id={folder.name}
+                      checked={selectedFolders.includes(folder.name)}
+                      onCheckedChange={() => handleToggleFolder(folder.name)}
                     />
-                    <Label htmlFor={folder} className="cursor-pointer">
-                      📁 {folder}
+                    <Label htmlFor={folder.name} className="cursor-pointer flex-1 flex items-center justify-between">
+                      <span className="flex items-center gap-2">📁 {folder.name}</span>
+                      <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {folder.gologinCount > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Cloud className="h-3 w-3" />
+                            {folder.gologinCount}
+                          </span>
+                        )}
+                        {folder.localCount > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Monitor className="h-3 w-3" />
+                            {folder.localCount}
+                          </span>
+                        )}
+                      </span>
                     </Label>
                   </div>
                 ))
@@ -115,6 +136,16 @@ export function FolderAssignmentDialog({ open, onOpenChange, user, onSuccess }: 
 
           <div className="flex justify-between items-center text-sm text-muted-foreground">
             <span>{selectedFolders.length} folder(s) selected</span>
+            <span className="flex items-center gap-3">
+              <span className="flex items-center gap-1">
+                <Cloud className="h-3 w-3" />
+                GoLogin
+              </span>
+              <span className="flex items-center gap-1">
+                <Monitor className="h-3 w-3" />
+                Local
+              </span>
+            </span>
           </div>
 
           <div className="flex justify-end gap-2">

@@ -21,3 +21,4 @@ export async function getSupabaseServerClient() {
 }
 
 export const createClient = getSupabaseServerClient
+export { getSupabaseServerClient as createServerClient }

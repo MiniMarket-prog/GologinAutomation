@@ -11,9 +11,17 @@ export class GmailAutomator {
     this.behavior = new HumanBehavior(behaviorPattern)
   }
 
-  async login(email: string, password: string): Promise<{ success: boolean; error?: string }> {
+  async login(
+    email: string,
+    password: string,
+    recoveryEmail?: string,
+    sessionSaveWaitTime = 45000, // Made wait time configurable, default 45s for setup
+  ): Promise<{ success: boolean; error?: string; status?: string; message?: string }> {
     console.log("[v0] Starting Gmail login process...")
     console.log(`[v0] Email: ${email}`)
+    if (recoveryEmail) {
+      console.log(`[v0] Recovery email provided: ${recoveryEmail}`)
+    }
 
     try {
       // Navigate to Gmail
@@ -25,9 +33,91 @@ export class GmailAutomator {
 
       await this.behavior.waitRandom(2000)
 
+      const hasRecaptcha = await this.page.evaluate(() => {
+        const bodyText = document.body.textContent || ""
+        const hasRecaptchaText =
+          bodyText.includes("Je ne suis pas un robot") ||
+          bodyText.includes("I'm not a robot") ||
+          bodyText.includes("I am not a robot") ||
+          document.querySelector(".g-recaptcha") !== null ||
+          document.querySelector('iframe[src*="recaptcha"]') !== null
+        return hasRecaptchaText
+      })
+
+      if (hasRecaptcha) {
+        console.log("[v0] ⚠️ reCAPTCHA challenge detected!")
+        return {
+          success: false,
+          status: "captcha_required",
+          message: "reCAPTCHA challenge detected. Please solve it manually or use a CAPTCHA solving service.",
+        }
+      }
+
+      const isReauthPage = await this.page.evaluate(() => {
+        const bodyText = document.body.textContent || ""
+        return (
+          bodyText.includes("Confirmez qu'il s'agit bien de vous") ||
+          bodyText.includes("Confirm it's you") ||
+          bodyText.includes("Confirm it's really you") ||
+          bodyText.includes("تأكيد هويتك") // Arabic
+        )
+      })
+
+      if (isReauthPage) {
+        console.log("[v0] ⚠️ Detected 'Confirm it's you' re-authentication page")
+        console.log("[v0] Looking for 'Suivant' or 'Next' button...")
+
+        const suivantClicked = await this.page.evaluate(() => {
+          const buttonTexts = ["suivant", "next", "التالي", "continuar", "weiter"]
+          const buttons = Array.from(document.querySelectorAll("button"))
+
+          for (const button of buttons) {
+            const text = button.textContent?.toLowerCase().trim() || ""
+            if (buttonTexts.some((btnText) => text.includes(btnText))) {
+              console.log(`[v0] [DEBUG] Found button with text: ${text}`)
+              button.click()
+              return true
+            }
+          }
+          return false
+        })
+
+        if (suivantClicked) {
+          console.log("[v0] ✓ Clicked 'Suivant' button")
+          await this.behavior.waitRandom(3000)
+
+          console.log("[v0] Checking if reCAPTCHA appeared after clicking Suivant...")
+          const hasRecaptchaAfterSuivant = await this.page.evaluate(() => {
+            const url = window.location.href
+            const bodyText = document.body.textContent || ""
+            const hasRecaptchaInUrl = url.includes("/challenge/recaptcha")
+            const hasRecaptchaText =
+              bodyText.includes("Je ne suis pas un robot") ||
+              bodyText.includes("I'm not a robot") ||
+              bodyText.includes("I am not a robot") ||
+              document.querySelector(".g-recaptcha") !== null ||
+              document.querySelector('iframe[src*="recaptcha"]') !== null
+            return hasRecaptchaInUrl || hasRecaptchaText
+          })
+
+          if (hasRecaptchaAfterSuivant) {
+            console.log("[v0] ⚠️ reCAPTCHA challenge appeared after clicking Suivant!")
+            return {
+              success: false,
+              status: "captcha_required",
+              message: "reCAPTCHA challenge detected. Please solve it manually or use a CAPTCHA solving service.",
+            }
+          } else {
+            console.log("[v0] ✓ No reCAPTCHA detected after clicking Suivant")
+          }
+        } else {
+          console.log("[v0] ⚠️ Could not find 'Suivant' button")
+        }
+      }
+
       // Enter email
       console.log("[v0] Looking for email input...")
-      const emailInput = await this.page.waitForSelector('input[type="email"]', { timeout: 10000 })
+      const emailInput = await this.page.waitForSelector('input[type="email"]', { timeout: 15000 })
       if (!emailInput) throw new Error("Email input not found")
       console.log("[v0] ✓ Email input found")
 
@@ -110,71 +200,637 @@ export class GmailAutomator {
 
       // Click Next/Sign in button
       console.log("[v0] Looking for Sign in button...")
-      let signInButton: ElementHandle<Element> | null = null
+      const signInButton: ElementHandle<Element> | null = null
 
-      // Try standard selectors
-      for (const selector of selectors) {
-        try {
-          const btn = await this.page.$(selector)
-          if (btn) {
-            signInButton = btn as ElementHandle<Element>
-            console.log(`[v0] ✓ Found Sign in button with selector: ${selector}`)
-            break
+      // First, try to find the button by evaluating all buttons and finding the right one
+      const buttonFound = await this.page.evaluate(() => {
+        console.log("[v0] [DEBUG] Searching for password submit button...")
+
+        // Get all buttons on the page
+        const allButtons = Array.from(document.querySelectorAll("button"))
+        console.log(`[v0] [DEBUG] Found ${allButtons.length} total buttons on page`)
+
+        // Filter to only visible buttons
+        const visibleButtons = allButtons.filter((btn) => {
+          const style = window.getComputedStyle(btn)
+          const isVisible =
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.opacity !== "0" &&
+            btn.offsetParent !== null
+          return isVisible
+        })
+
+        console.log(`[v0] [DEBUG] Found ${visibleButtons.length} visible buttons`)
+
+        // Log all visible buttons for debugging
+        visibleButtons.forEach((btn, idx) => {
+          const text = btn.textContent?.trim() || ""
+          const ariaLabel = btn.getAttribute("aria-label") || ""
+          const type = btn.getAttribute("type") || ""
+          console.log(`[v0] [DEBUG] Button ${idx + 1}: text="${text}", aria-label="${ariaLabel}", type="${type}"`)
+        })
+
+        // Text patterns to look for in multiple languages
+        const nextTexts = [
+          "next", // English
+          "التالي", // Arabic
+          "suivant", // French
+          "siguiente", // Spanish
+          "weiter", // German
+          "avanti", // Italian
+          "próximo", // Portuguese
+        ]
+
+        // Find the button that matches our criteria
+        for (const button of visibleButtons) {
+          const text = button.textContent?.toLowerCase().trim() || ""
+          const ariaLabel = button.getAttribute("aria-label")?.toLowerCase() || ""
+
+          // Check if this button contains any of our target texts
+          const matchesText = nextTexts.some(
+            (nextText) => text.includes(nextText.toLowerCase()) || ariaLabel.includes(nextText.toLowerCase()),
+          )
+
+          if (matchesText) {
+            console.log(`[v0] [DEBUG] ✓ Found matching button with text: "${button.textContent?.trim()}"`)
+            // Click it directly in the DOM
+            button.click()
+            return true
           }
-        } catch (e) {
-          continue
         }
-      }
 
-      // If standard selectors fail, try finding by text
-      if (!signInButton) {
-        console.log("[v0] Standard selectors failed, searching by text content...")
-        const buttons = await this.page.$$("button")
-        for (const button of buttons) {
-          const text = await button.evaluate((el) => el.textContent?.toLowerCase() || "")
-          if (
-            text.includes("next") ||
-            text.includes("sign in") ||
-            text.includes("التالي") ||
-            text.includes("تسجيل الدخول") || // Arabic "Sign in"
-            text.includes("connexion") ||
-            text.includes("iniciar sesión") ||
-            text.includes("anmelden")
-          ) {
-            signInButton = button as ElementHandle<Element>
-            console.log(`[v0] ✓ Found Sign in button by text: ${text}`)
-            break
+        // If no text match, try to find the submit button near the password field
+        console.log("[v0] [DEBUG] No text match found, looking for button near password field...")
+        const passwordInput = document.querySelector('input[type="password"]')
+        if (passwordInput) {
+          // Find the closest form or container
+          const form = passwordInput.closest("form") || passwordInput.closest("div[role='presentation']")
+          if (form) {
+            // Find buttons within this form/container
+            const formButtons = Array.from(form.querySelectorAll("button")).filter((btn) => {
+              const style = window.getComputedStyle(btn)
+              return (
+                style.display !== "none" &&
+                style.visibility !== "hidden" &&
+                style.opacity !== "0" &&
+                btn.offsetParent !== null
+              )
+            })
+
+            console.log(`[v0] [DEBUG] Found ${formButtons.length} visible buttons in password form`)
+
+            // Click the last visible button (usually the submit button)
+            if (formButtons.length > 0) {
+              const submitButton = formButtons[formButtons.length - 1]
+              console.log(`[v0] [DEBUG] ✓ Clicking last button in form: "${submitButton.textContent?.trim()}"`)
+              submitButton.click()
+              return true
+            }
           }
         }
+
+        console.log("[v0] [DEBUG] ✗ Could not find password submit button")
+        return false
+      })
+
+      if (!buttonFound) {
+        throw new Error("Sign in button not found or could not be clicked")
       }
 
-      if (!signInButton) {
-        throw new Error("Sign in button not found")
-      }
-
-      await this.behavior.randomPause()
-      await signInButton.click()
       console.log("[v0] ✓ Clicked Sign in button")
 
       // Wait for navigation
       await this.behavior.waitRandom(5000)
 
-      // Check if login was successful
-      const currentUrl = this.page.url()
-      if (currentUrl.includes("mail.google.com")) {
-        console.log("[v0] ✓ Login successful!")
-        return { success: true }
-      } else if (currentUrl.includes("challenge") || currentUrl.includes("verify")) {
-        console.log("[v0] ⚠ 2FA or verification required")
+      // Check if we're on the verification challenge page
+      if (this.page.url().includes("/challenge/selection")) {
+        console.log("[v0] ⚠ Verification challenge detected, attempting recovery email verification...")
+
+        console.log("[v0] [DEBUG] Analyzing verification page options...")
+
+        // Dump all clickable elements and their text content
+        const pageOptions = await this.page.evaluate(() => {
+          const options: Array<{
+            tag: string
+            text: string
+            ariaLabel: string | null
+            dataType: string | null
+            role: string | null
+            classes: string
+          }> = []
+
+          // Find all potentially clickable elements
+          const selectors = [
+            'div[role="link"]',
+            "div[data-challengetype]",
+            '[role="button"]',
+            "button",
+            "div[jsname]",
+            'li[role="presentation"]',
+            "div[data-challengeindex]",
+          ]
+
+          selectors.forEach((selector) => {
+            const elements = document.querySelectorAll(selector)
+            elements.forEach((el) => {
+              const text = el.textContent?.trim() || ""
+              if (text) {
+                options.push({
+                  tag: el.tagName,
+                  text: text.substring(0, 150),
+                  ariaLabel: el.getAttribute("aria-label"),
+                  dataType: el.getAttribute("data-challengetype"),
+                  role: el.getAttribute("role"),
+                  classes: el.className,
+                })
+              }
+            })
+          })
+
+          return options
+        })
+
+        console.log("[v0] [DEBUG] Found", pageOptions.length, "clickable options on verification page:")
+        pageOptions.forEach((opt, idx) => {
+          console.log(`[v0] [DEBUG] Option ${idx + 1}:`, JSON.stringify(opt, null, 2))
+        })
+
+        // Try to click recovery email option
+        const recoveryClicked = await this.page.evaluate(() => {
+          const recoveryTexts = [
+            "recovery email",
+            "alternate email",
+            "backup email",
+            "confirm your recovery email",
+            "تأكيد البريد الإلكتروني لاسترداد الحساب", // Arabic - exact text from screenshot
+            "البريد الإلكتروني لاسترداد الحساب", // Arabic - recovery email
+            "البريد الإلكتروني للطوارئ", // Arabic - emergency email
+            "بريد الاسترداد", // Arabic - recovery mail
+            "البريد البديل", // Arabic - alternate email
+            "e-mail de récupération",
+            "adresse e-mail de secours", // French
+            "correo de recuperación", // Spanish
+            "wiederherstellungs-e-mail", // German
+          ]
+
+          // First, try to find and click a BUTTON element
+          const buttons = Array.from(document.querySelectorAll("button"))
+
+          console.log("[v0] [DEBUG] Checking", buttons.length, "button elements for recovery email option...")
+
+          for (const button of buttons) {
+            const text = button.textContent?.toLowerCase() || ""
+            const ariaLabel = button.getAttribute("aria-label")?.toLowerCase() || ""
+
+            // Check if this button mentions recovery/alternate email
+            const isRecoveryOption = recoveryTexts.some(
+              (recoveryText) =>
+                text.includes(recoveryText.toLowerCase()) || ariaLabel.includes(recoveryText.toLowerCase()),
+            )
+
+            if (isRecoveryOption) {
+              console.log("[v0] [DEBUG] ✓ Found recovery email BUTTON with text:", text.substring(0, 100))
+              button.click()
+              return true
+            }
+          }
+
+          // If no button found, try other clickable elements as fallback
+          const elements = Array.from(
+            document.querySelectorAll(
+              'div[role="link"], div[data-challengetype], [role="button"], li[role="presentation"]',
+            ),
+          )
+
+          console.log("[v0] [DEBUG] No button found, checking", elements.length, "other elements...")
+
+          for (const element of elements) {
+            const text = element.textContent?.toLowerCase() || ""
+            const ariaLabel = element.getAttribute("aria-label")?.toLowerCase() || ""
+            const dataType = element.getAttribute("data-challengetype")?.toLowerCase() || ""
+
+            // Check if this element mentions recovery/alternate email
+            const isRecoveryOption = recoveryTexts.some(
+              (recoveryText) =>
+                text.includes(recoveryText.toLowerCase()) ||
+                ariaLabel.includes(recoveryText.toLowerCase()) ||
+                dataType.includes("recovery") ||
+                dataType.includes("email"),
+            )
+
+            if (isRecoveryOption) {
+              console.log("[v0] [DEBUG] ✓ Found recovery email option (non-button) with text:", text.substring(0, 100))
+              const clickable = element as HTMLElement
+              clickable.click()
+              return true
+            }
+          }
+
+          console.log("[v0] [DEBUG] ✗ No recovery email option found")
+          return false
+        })
+
+        if (recoveryClicked) {
+          console.log("[v0] ✓ Clicked recovery email verification option")
+
+          await this.behavior.waitRandom(5000)
+
+          // Wait for navigation to complete
+          await this.page.waitForNavigation({ waitUntil: "networkidle2", timeout: 10000 }).catch(() => {
+            console.log("[v0] [DEBUG] No navigation detected after clicking recovery option")
+          })
+
+          console.log("[v0] [DEBUG] Analyzing page after clicking recovery option...")
+          console.log("[v0] [DEBUG] Current URL:", this.page.url())
+
+          const afterClickAnalysis = await this.page.evaluate(() => {
+            return {
+              title: document.title,
+              bodyText: document.body.innerText.substring(0, 500),
+              hasInputs: document.querySelectorAll('input[type="email"], input[type="text"]').length,
+              hasButtons: document.querySelectorAll('button, [role="button"]').length,
+              allInputs: Array.from(document.querySelectorAll("input")).map((inp) => ({
+                type: inp.type,
+                name: inp.name,
+                id: inp.id,
+                placeholder: inp.placeholder,
+                ariaLabel: inp.getAttribute("aria-label"),
+                visible: inp.offsetParent !== null,
+              })),
+              allButtons: Array.from(document.querySelectorAll('button, [role="button"]')).map((btn) => ({
+                text: btn.textContent?.trim().substring(0, 50),
+                ariaLabel: btn.getAttribute("aria-label"),
+                type: btn.getAttribute("type"),
+              })),
+            }
+          })
+
+          console.log("[v0] [DEBUG] After click analysis:", JSON.stringify(afterClickAnalysis, null, 2))
+
+          // Now enter the recovery email
+          console.log("[v0] Looking for recovery email input...")
+          console.log("[v0] [DEBUG] Current URL:", this.page.url())
+
+          let recoveryInput = null
+
+          // Try different selectors
+          const selectors = [
+            'input[type="email"]',
+            'input[name="knowledgePreregisteredEmailResponse"]',
+            'input[aria-label*="email"]',
+            'input[aria-label*="البريد"]',
+            "input#knowledge-preregistered-email-response",
+            'input[type="text"]',
+          ]
+
+          for (const selector of selectors) {
+            console.log(`[v0] [DEBUG] Trying selector: ${selector}`)
+            recoveryInput = await this.page.$(selector)
+            if (recoveryInput) {
+              console.log(`[v0] [DEBUG] ✓ Found input with selector: ${selector}`)
+              break
+            }
+          }
+
+          if (!recoveryInput) {
+            console.log("[v0] [DEBUG] No input found with standard selectors, checking all inputs on page...")
+            const allInputs = await this.page.$$("input")
+            console.log(`[v0] [DEBUG] Found ${allInputs.length} input elements on page`)
+
+            for (let i = 0; i < allInputs.length; i++) {
+              const input = allInputs[i]
+              const type = await input.evaluate((el) => el.getAttribute("type"))
+              const name = await input.evaluate((el) => el.getAttribute("name"))
+              const id = await input.evaluate((el) => el.getAttribute("id"))
+              const ariaLabel = await input.evaluate((el) => el.getAttribute("aria-label"))
+              console.log(
+                `[v0] [DEBUG] Input ${i}: type="${type}", name="${name}", id="${id}", aria-label="${ariaLabel}"`,
+              )
+
+              // Use the first visible input
+              if (!recoveryInput && (type === "email" || type === "text" || !type)) {
+                const isVisible = await input.evaluate((el) => {
+                  const style = window.getComputedStyle(el)
+                  return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0"
+                })
+                if (isVisible) {
+                  recoveryInput = input
+                  console.log(`[v0] [DEBUG] Using input ${i} as recovery email input`)
+                  break
+                }
+              }
+            }
+          }
+
+          if (recoveryInput) {
+            console.log("[v0] ✓ Recovery email input found")
+            if (!recoveryEmail) {
+              console.log("[v0] ⚠ Recovery email not provided - stopping at recovery email field")
+              console.log("[v0] Browser will remain open for manual input")
+              return {
+                success: true,
+                status: "waiting_for_recovery_email",
+                message: "Stopped at recovery email verification - waiting for manual input",
+              }
+            }
+            await this.behavior.randomPause()
+            console.log("[v0] Typing recovery email...")
+            await this.behavior.typeWithHumanSpeed(recoveryEmail, recoveryInput)
+            console.log("[v0] ✓ Recovery email entered")
+
+            await this.behavior.waitRandom(1000)
+
+            // Click Next button
+            console.log("[v0] Looking for Next button...")
+            const nextBtn = await this.findButtonByText(["next", "التالي", "suivant", "siguiente"])
+
+            if (nextBtn) {
+              await this.behavior.randomPause()
+              await nextBtn.click()
+              console.log("[v0] ✓ Clicked Next button")
+
+              // Wait for verification to complete
+              await this.behavior.waitRandom(5000)
+
+              const newUrl = this.page.url()
+              if (newUrl.includes("mail.google.com")) {
+                console.log("[v0] ✓ Login successful after recovery email verification!")
+
+                console.log("[v0] Checking for browser password save dialog...")
+                await this.behavior.waitRandom(3000) // Increased wait time for dialog to appear
+
+                const savePasswordClicked = await this.page.evaluate(() => {
+                  console.log("[v0] [DEBUG] Starting password save dialog search...")
+
+                  // Look for the "Save" button in multiple languages
+                  const saveTexts = [
+                    "save", // English
+                    "حفظ", // Arabic
+                    "enregistrer", // French
+                    "guardar", // Spanish
+                    "speichern", // German
+                    "salvar", // Portuguese
+                    "tallenna", // Finnish
+                  ]
+
+                  // Debug: Log all buttons on the page
+                  const allButtons = Array.from(document.querySelectorAll("button"))
+                  console.log("[v0] [DEBUG] Found", allButtons.length, "buttons on page")
+                  allButtons.forEach((btn, idx) => {
+                    const text = btn.textContent?.trim() || ""
+                    const visible = btn.offsetParent !== null
+                    console.log(
+                      `[v0] [DEBUG] Button ${idx + 1}: text="${text}", visible=${visible}, classes="${btn.className}"`,
+                    )
+                  })
+
+                  // Debug: Log all divs with role="button"
+                  const divButtons = Array.from(document.querySelectorAll('div[role="button"]'))
+                  console.log("[v0] [DEBUG] Found", divButtons.length, 'divs with role="button"')
+                  divButtons.forEach((div, idx) => {
+                    const text = div.textContent?.trim() || ""
+                    const visible = (div as HTMLElement).offsetParent !== null
+                    console.log(`[v0] [DEBUG] Div button ${idx + 1}: text="${text}", visible=${visible}`)
+                  })
+
+                  // Try to find and click the save button
+                  // Method 1: Look for button elements
+                  for (const button of allButtons) {
+                    const text = button.textContent?.toLowerCase().trim() || ""
+                    const visible = button.offsetParent !== null
+
+                    if (!visible) continue
+
+                    const isSaveButton = saveTexts.some(
+                      (saveText) => text === saveText.toLowerCase() || text.includes(saveText.toLowerCase()),
+                    )
+
+                    if (isSaveButton) {
+                      console.log("[v0] [DEBUG] Found save password button (method 1) with text:", text)
+                      button.click()
+                      return true
+                    }
+                  }
+
+                  // Method 2: Look for div elements with role="button"
+                  for (const div of divButtons) {
+                    const text = div.textContent?.toLowerCase().trim() || ""
+                    const visible = (div as HTMLElement).offsetParent !== null
+
+                    if (!visible) continue
+
+                    const isSaveButton = saveTexts.some(
+                      (saveText) => text === saveText.toLowerCase() || text.includes(saveText.toLowerCase()),
+                    )
+
+                    if (isSaveButton) {
+                      console.log("[v0] [DEBUG] Found save password button (method 2) with text:", text)
+                      ;(div as HTMLElement).click()
+                      return true
+                    }
+                  }
+
+                  // Method 3: Look for any element containing save text
+                  const allElements = Array.from(document.querySelectorAll("*"))
+                  console.log("[v0] [DEBUG] Searching through all elements for save button...")
+
+                  for (const element of allElements) {
+                    const text = element.textContent?.toLowerCase().trim() || ""
+                    const tagName = element.tagName.toLowerCase()
+
+                    // Skip if element has too much text (likely a container)
+                    if (text.length > 50) continue
+
+                    const isSaveButton = saveTexts.some((saveText) => text === saveText.toLowerCase())
+
+                    if (isSaveButton && (tagName === "button" || element.getAttribute("role") === "button")) {
+                      const visible = (element as HTMLElement).offsetParent !== null
+                      console.log(
+                        `[v0] [DEBUG] Found potential save button (method 3): tag=${tagName}, text="${text}", visible=${visible}`,
+                      )
+
+                      if (visible) {
+                        ;(element as HTMLElement).click()
+                        return true
+                      }
+                    }
+                  }
+
+                  console.log("[v0] [DEBUG] No save password button found after exhaustive search")
+                  return false
+                })
+
+                if (savePasswordClicked) {
+                  console.log("[v0] ✓ Clicked 'Save password' button in browser dialog")
+                  await this.behavior.waitRandom(1000)
+                } else {
+                  console.log("[v0] No password save dialog detected (this is normal if already saved)")
+                }
+
+                return { success: true }
+              } else {
+                console.log("[v0] ⚠ Still on verification page after recovery email")
+                return { success: false, error: "Recovery email verification incomplete - may need additional steps" }
+              }
+            } else {
+              console.log("[v0] ⚠ Next button not found after entering recovery email")
+              return { success: false, error: "Could not proceed after entering recovery email" }
+            }
+          } else {
+            console.log("[v0] ⚠ Recovery email input not found")
+            return { success: false, error: "Recovery email input not found on verification page" }
+          }
+        } else {
+          console.log("[v0] ⚠ Could not find recovery email verification option")
+          return { success: false, error: "Recovery email option not found on verification page" }
+        }
+      } else if (this.page.url().includes("challenge") || this.page.url().includes("verify")) {
+        console.log("[v0] ⚠ 2FA or verification required (no recovery email provided)")
         return { success: false, error: "2FA or verification required" }
+      } else if (this.page.url().includes("mail.google.com")) {
+        console.log("[v0] ✓ Login successful!")
+
+        console.log("[v0] Checking for browser password save dialog...")
+        await this.behavior.waitRandom(3000) // Increased wait time for dialog to appear
+
+        const savePasswordClicked = await this.page.evaluate(() => {
+          console.log("[v0] [DEBUG] Starting password save dialog search...")
+
+          // Look for the "Save" button in multiple languages
+          const saveTexts = [
+            "save", // English
+            "حفظ", // Arabic
+            "enregistrer", // French
+            "guardar", // Spanish
+            "speichern", // German
+            "salvar", // Portuguese
+            "tallenna", // Finnish
+          ]
+
+          // Debug: Log all buttons on the page
+          const allButtons = Array.from(document.querySelectorAll("button"))
+          console.log("[v0] [DEBUG] Found", allButtons.length, "buttons on page")
+          allButtons.forEach((btn, idx) => {
+            const text = btn.textContent?.trim() || ""
+            const visible = btn.offsetParent !== null
+            console.log(
+              `[v0] [DEBUG] Button ${idx + 1}: text="${text}", visible=${visible}, classes="${btn.className}"`,
+            )
+          })
+
+          // Debug: Log all divs with role="button"
+          const divButtons = Array.from(document.querySelectorAll('div[role="button"]'))
+          console.log("[v0] [DEBUG] Found", divButtons.length, 'divs with role="button"')
+          divButtons.forEach((div, idx) => {
+            const text = div.textContent?.trim() || ""
+            const visible = (div as HTMLElement).offsetParent !== null
+            console.log(`[v0] [DEBUG] Div button ${idx + 1}: text="${text}", visible=${visible}`)
+          })
+
+          // Try to find and click the save button
+          // Method 1: Look for button elements
+          for (const button of allButtons) {
+            const text = button.textContent?.toLowerCase().trim() || ""
+            const visible = button.offsetParent !== null
+
+            if (!visible) continue
+
+            const isSaveButton = saveTexts.some(
+              (saveText) => text === saveText.toLowerCase() || text.includes(saveText.toLowerCase()),
+            )
+
+            if (isSaveButton) {
+              console.log("[v0] [DEBUG] Found save password button (method 1) with text:", text)
+              button.click()
+              return true
+            }
+          }
+
+          // Method 2: Look for div elements with role="button"
+          for (const div of divButtons) {
+            const text = div.textContent?.toLowerCase().trim() || ""
+            const visible = (div as HTMLElement).offsetParent !== null
+
+            if (!visible) continue
+
+            const isSaveButton = saveTexts.some(
+              (saveText) => text === saveText.toLowerCase() || text.includes(saveText.toLowerCase()),
+            )
+
+            if (isSaveButton) {
+              console.log("[v0] [DEBUG] Found save password button (method 2) with text:", text)
+              ;(div as HTMLElement).click()
+              return true
+            }
+          }
+
+          // Method 3: Look for any element containing save text
+          const allElements = Array.from(document.querySelectorAll("*"))
+          console.log("[v0] [DEBUG] Searching through all elements for save button...")
+
+          for (const element of allElements) {
+            const text = element.textContent?.toLowerCase().trim() || ""
+            const tagName = element.tagName.toLowerCase()
+
+            // Skip if element has too much text (likely a container)
+            if (text.length > 50) continue
+
+            const isSaveButton = saveTexts.some((saveText) => text === saveText.toLowerCase())
+
+            if (isSaveButton && (tagName === "button" || element.getAttribute("role") === "button")) {
+              const visible = (element as HTMLElement).offsetParent !== null
+              console.log(
+                `[v0] [DEBUG] Found potential save button (method 3): tag=${tagName}, text="${text}", visible=${visible}`,
+              )
+
+              if (visible) {
+                ;(element as HTMLElement).click()
+                return true
+              }
+            }
+          }
+
+          console.log("[v0] [DEBUG] No save password button found after exhaustive search")
+          return false
+        })
+
+        if (savePasswordClicked) {
+          console.log("[v0] ✓ Clicked 'Save password' button in browser dialog")
+          await this.behavior.waitRandom(1000)
+        } else {
+          console.log("[v0] No password save dialog detected (this is normal if already saved)")
+        }
+
+        if (sessionSaveWaitTime > 0) {
+          console.log("[v0] ========================================")
+          console.log(`[v0] Waiting ${sessionSaveWaitTime / 1000} seconds for browser to save session data...`)
+          console.log("[v0] This allows Chrome to write cookies and localStorage to disk")
+          console.log("[v0] ========================================")
+          await new Promise((resolve) => setTimeout(resolve, sessionSaveWaitTime))
+          console.log("[v0] ✓ Session data should now be saved to browser profile")
+        }
+
+        return { success: true }
       } else {
-        console.log("[v0] ✗ Login may have failed, unexpected URL:", currentUrl)
+        console.log("[v0] ✗ Login may have failed, unexpected URL:", this.page.url())
         return { success: false }
       }
     } catch (error: any) {
       console.error("[v0] Login error:", error.message)
       return { success: false, error: error.message }
     }
+  }
+
+  private async findButtonByText(texts: string[]): Promise<ElementHandle<Element> | null> {
+    const buttons = await this.page.$$("button")
+    for (const button of buttons) {
+      const buttonText = await button.evaluate((el) => el.textContent?.toLowerCase() || "")
+      if (texts.some((text) => buttonText.includes(text.toLowerCase()))) {
+        return button as ElementHandle<Element>
+      }
+    }
+    return null
   }
 
   async checkInbox() {
@@ -276,18 +932,30 @@ export class GmailAutomator {
   }
 
   async starEmail(emailIndex: number) {
+    return this.starEmailOnPage(this.page, emailIndex)
+  }
+
+  async starEmailOnPage(page: Page, emailIndex: number) {
     console.log(`[v0] Starring email at index ${emailIndex}`)
 
     try {
-      console.log("[v0] Navigating to Gmail inbox...")
-      await this.page.goto("https://mail.google.com/mail/u/0/#inbox", {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      })
-      await this.behavior.waitRandom(3000)
+      console.log("[v0] Checking if on Gmail inbox...")
+      const currentUrl = page.url()
+
+      if (!currentUrl.includes("mail.google.com/mail/u/0/#inbox")) {
+        console.log("[v0] Navigating to Gmail inbox...")
+        await page.goto("https://mail.google.com/mail/u/0/#inbox", {
+          waitUntil: "networkidle2",
+          timeout: 30000,
+        })
+        await this.behavior.waitRandom(3000)
+      } else {
+        console.log("[v0] ✓ Already on Gmail inbox")
+        await this.behavior.waitRandom(1000)
+      }
 
       console.log("[v0] Checking if logged into Gmail...")
-      const isLoggedIn = await this.page.evaluate(() => {
+      const isLoggedIn = await page.evaluate(() => {
         // Check for common Gmail UI elements that only appear when logged in
         const hasComposeButton = !!document.querySelector('[gh="cm"]')
         const hasInboxLabel =
@@ -312,7 +980,7 @@ export class GmailAutomator {
       if (!isLoggedIn.isLoggedIn) {
         console.log("[v0] ❌ Not logged into Gmail!")
 
-        const screenshot = await this.page.screenshot({ encoding: "base64" })
+        const screenshot = await page.screenshot({ encoding: "base64" })
         console.log("[v0] Screenshot captured for debugging (base64 length):", screenshot.length)
 
         throw new Error(
@@ -324,7 +992,7 @@ export class GmailAutomator {
       console.log("[v0] Waiting for Gmail interface to fully load...")
 
       // Wait for the main Gmail container
-      await this.page.waitForSelector('[role="main"]', { timeout: 15000 }).catch(() => {
+      await page.waitForSelector('[role="main"]', { timeout: 15000 }).catch(() => {
         console.log("[v0] Main Gmail container not found")
       })
       await this.behavior.waitRandom(2000)
@@ -343,7 +1011,7 @@ export class GmailAutomator {
         ]
 
         for (const selector of selectors) {
-          emailRows = await this.page.$$(selector)
+          emailRows = await page.$$(selector)
           if (emailRows.length > 0) {
             console.log(`[v0] Found ${emailRows.length} email rows using selector: ${selector}`)
             break
@@ -356,13 +1024,13 @@ export class GmailAutomator {
           retries++
           if (retries < maxRetries) {
             console.log("[v0] No emails found, scrolling and waiting...")
-            await this.behavior.scrollNaturally(this.page, 300)
+            await this.behavior.scrollNaturally(page, 300)
             await this.behavior.waitRandom(2000)
 
             // Try clicking on inbox to refresh
             if (retries === 3) {
               console.log("[v0] Trying to click inbox link to refresh...")
-              const inboxLink = await this.page.$('a[href*="#inbox"]')
+              const inboxLink = await page.$('a[href*="#inbox"]')
               if (inboxLink) {
                 await inboxLink.click()
                 await this.behavior.waitRandom(3000)
@@ -375,7 +1043,7 @@ export class GmailAutomator {
       if (emailRows.length === 0) {
         console.log("[v0] Capturing page state for debugging...")
 
-        const pageInfo = await this.page.evaluate(() => {
+        const pageInfo = await page.evaluate(() => {
           return {
             url: window.location.href,
             title: document.title,
@@ -389,7 +1057,7 @@ export class GmailAutomator {
 
         console.log("[v0] Page state:", JSON.stringify(pageInfo, null, 2))
 
-        const screenshot = await this.page.screenshot({ encoding: "base64" })
+        const screenshot = await page.screenshot({ encoding: "base64" })
         console.log("[v0] Screenshot captured for debugging (base64 length):", screenshot.length)
 
         throw new Error("Could not find email rows on page - Gmail may not have loaded properly or inbox is empty")
@@ -402,7 +1070,7 @@ export class GmailAutomator {
       }
 
       console.log(`[v0] Checking if email ${emailIndex} is already starred...`)
-      const starStatus = await this.page.evaluate((index) => {
+      const starStatus = await page.evaluate((index) => {
         const rows = Array.from(document.querySelectorAll("tr.zA"))
         const row = rows[index]
         if (!row) {
@@ -479,7 +1147,7 @@ export class GmailAutomator {
 
         console.log("[v0] Could not find star button. Found elements:", JSON.stringify(foundElements, null, 2))
 
-        const screenshot = await this.page.screenshot({ encoding: "base64" })
+        const screenshot = await page.screenshot({ encoding: "base64" })
         console.log("[v0] Screenshot captured for debugging (base64 length):", screenshot.length)
 
         throw new Error("Star button not found with any selector")
@@ -492,11 +1160,11 @@ export class GmailAutomator {
       await this.behavior.waitRandom(1000)
 
       // Check if any extra tabs opened and close them
-      const pages = await this.page.browser()?.pages()
-      if (pages && pages.length > 1) {
+      const pages = await page.browser()?.pages()
+      if (pages && pages.length > 2) {
         console.log(`[v0] Detected ${pages.length} open tabs, closing extra tabs...`)
-        // Close all tabs except the first one (inbox)
-        for (let i = 1; i < pages.length; i++) {
+        // Close all tabs except the first two (homepage and Gmail)
+        for (let i = 2; i < pages.length; i++) {
           try {
             await pages[i].close()
             console.log(`[v0] ✓ Closed extra tab ${i}`)
@@ -516,7 +1184,7 @@ export class GmailAutomator {
       console.error("[v0] Error stack:", error.stack)
 
       try {
-        const screenshot = await this.page.screenshot({ encoding: "base64" })
+        const screenshot = await page.screenshot({ encoding: "base64" })
         console.log("[v0] Screenshot captured for debugging (base64 length):", screenshot.length)
       } catch (screenshotError) {
         console.error("[v0] Could not capture screenshot:", screenshotError)

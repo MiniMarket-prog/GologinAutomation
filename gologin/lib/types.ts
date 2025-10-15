@@ -8,21 +8,42 @@ export interface User {
 
 export interface GoLoginProfile {
   id: string
-  profile_id: string
+  profile_id: string | null // Made nullable for local profiles
   profile_name: string
+  profile_type: "gologin" | "local" // Added profile type
   folder_name?: string | null
   gmail_email: string | null
   gmail_password: string | null
   gmail_status?: "ok" | "blocked" | "password_required" | "verification_required" | "error" | "unknown" | null
   gmail_status_checked_at?: string | null
   gmail_status_message?: string | null
-  status: "idle" | "running" | "paused" | "error" | "deleted"
+  status: "idle" | "running" | "paused" | "error"
   last_run: string | null
   assigned_user_id: string | null
-  is_deleted?: boolean
-  deleted_at?: string | null
+  local_config?: LocalProfileConfig | null // Added local config
   created_at: string
   updated_at: string
+}
+
+export interface LocalProfileConfig {
+  user_data_dir?: string // Path to Chrome user data directory
+  proxy?: {
+    server: string
+    username?: string
+    password?: string
+  }
+  browser_args?: string[] // Additional Chrome arguments
+  viewport?: {
+    width: number
+    height: number
+  }
+  window_size?: {
+    width: number
+    height: number
+    x?: number // Window X position on screen
+    y?: number // Window Y position on screen
+  }
+  user_agent?: string
 }
 
 export interface AutomationTask {
@@ -37,6 +58,7 @@ export interface AutomationTask {
     | "reply_to_email"
     | "report_to_inbox"
     | "check_gmail_status"
+    | "setup_gmail" // Added setup_gmail task type
   status: "pending" | "running" | "completed" | "failed"
   priority: number
   config: Record<string, any>

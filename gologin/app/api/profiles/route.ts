@@ -6,17 +6,19 @@ import { gologinAPI } from "@/lib/gologin/api"
 
 export async function GET(request: Request) {
   try {
-    const userIsAdmin = await isAdmin()
-    console.log("[v0] Admin status:", userIsAdmin)
-
-    const supabase = userIsAdmin ? getSupabaseAdminClient() : await getSupabaseServerClient()
-
+    const serverClient = await getSupabaseServerClient()
     const {
       data: { user },
-    } = await (await getSupabaseServerClient()).auth.getUser()
+    } = await serverClient.auth.getUser()
+
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+
+    const userIsAdmin = await isAdmin()
+    console.log("[v0] Admin status:", userIsAdmin)
+
+    const supabase = userIsAdmin ? getSupabaseAdminClient() : serverClient
 
     const { searchParams } = new URL(request.url)
 
@@ -97,26 +99,54 @@ export async function GET(request: Request) {
 
     console.log(`[v0] [DEBUG] Fetching profiles from database for ${profileIds.length} GoLogin profiles`)
 
-    let dbProfiles: any[] = []
+    const dbProfiles: any[] = []
     try {
-      const { data, error: dbError } = await supabase.from("gologin_profiles").select("*").in("profile_id", profileIds)
+      console.log("[v0] [DEBUG] Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL ? "Set" : "Missing")
+      console.log("[v0] [DEBUG] Using client type:", userIsAdmin ? "Admin" : "Server")
 
-      if (dbError) {
-        console.error("[v0] [ERROR] Database query error:", {
-          message: dbError.message,
-          details: dbError.details,
-          hint: dbError.hint,
-          code: dbError.code,
-        })
+      if (profileIds.length === 0) {
+        console.log("[v0] [DEBUG] No profile IDs to query, skipping database fetch")
       } else {
-        dbProfiles = data || []
-        console.log(`[v0] [DEBUG] Database query returned ${dbProfiles.length} profiles from gologin_profiles table`)
+        const BATCH_SIZE = 100
+        const batches = []
+
+        for (let i = 0; i < profileIds.length; i += BATCH_SIZE) {
+          const batch = profileIds.slice(i, i + BATCH_SIZE)
+          batches.push(batch)
+        }
+
+        console.log(
+          `[v0] [DEBUG] Splitting ${profileIds.length} profiles into ${batches.length} batches of ${BATCH_SIZE}`,
+        )
+
+        // Query each batch and combine results
+        for (let i = 0; i < batches.length; i++) {
+          const batch = batches[i]
+          console.log(`[v0] [DEBUG] Querying batch ${i + 1}/${batches.length} (${batch.length} profiles)`)
+
+          const { data, error: dbError } = await supabase.from("gologin_profiles").select("*").in("profile_id", batch)
+
+          if (dbError) {
+            console.error(`[v0] [ERROR] Database query error in batch ${i + 1}:`, {
+              message: dbError.message,
+              details: dbError.details,
+              hint: dbError.hint,
+              code: dbError.code,
+            })
+          } else if (data) {
+            dbProfiles.push(...data)
+            console.log(`[v0] [DEBUG] Batch ${i + 1} returned ${data.length} profiles`)
+          }
+        }
+
+        console.log(
+          `[v0] [DEBUG] Total database query returned ${dbProfiles.length} profiles from gologin_profiles table`,
+        )
       }
     } catch (error: any) {
       console.error("[v0] [ERROR] Exception during database query:", {
         message: error.message,
-        stack: error.stack,
-        name: error.name,
+        details: error.stack || error.toString(),
       })
       console.log("[v0] [WARN] Continuing without database data due to query failure")
     }

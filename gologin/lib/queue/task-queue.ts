@@ -28,92 +28,117 @@ export class TaskQueue {
 
     try {
       const adminClient = getSupabaseAdminClient()
-      const supabase = await getSupabaseServerClient()
-
       const fetchLimit = Math.max(20, this.maxConcurrentTasks * 4)
-      console.log("[v0] Fetching pending tasks...")
 
-      const { data: tasks, error: tasksError } = await (adminClient.from("automation_tasks") as any)
-        .select("*")
-        .eq("status", "pending")
-        .or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`)
-        .order("priority", { ascending: false })
-        .order("scheduled_at", { ascending: true, nullsFirst: true })
-        .limit(fetchLimit)
+      let totalProcessed = 0
+      let batchNumber = 0
 
-      if (tasksError) {
-        console.error("[v0] ❌ Error fetching tasks:", tasksError)
-        throw tasksError
-      }
+      while (true) {
+        batchNumber++
+        console.log(`[v0] ----------------------------------------`)
+        console.log(`[v0] Batch ${batchNumber}: Fetching pending tasks...`)
+        console.log(`[v0] ----------------------------------------`)
 
-      if (!tasks || tasks.length === 0) {
-        console.log("[v0] No pending tasks to process")
-        return
-      }
+        const { data: tasks, error: tasksError } = await (adminClient.from("automation_tasks") as any)
+          .select("*")
+          .eq("status", "pending")
+          .or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`)
+          .order("priority", { ascending: false })
+          .order("scheduled_at", { ascending: true, nullsFirst: true })
+          .limit(fetchLimit)
 
-      console.log(`[v0] ✓ Found ${tasks.length} pending tasks`)
-
-      // This prevents multiple processors from processing the same tasks
-      const taskIds = tasks.map((t: any) => t.id)
-      const { data: claimedTasks, error: claimError } = await (adminClient.from("automation_tasks") as any)
-        .update({
-          status: "running",
-          started_at: new Date().toISOString(),
-        })
-        .in("id", taskIds)
-        .eq("status", "pending") // Only update if still pending
-        .select()
-
-      if (claimError) {
-        console.error("[v0] ❌ Error claiming tasks:", claimError)
-        throw claimError
-      }
-
-      if (!claimedTasks || claimedTasks.length === 0) {
-        console.log("[v0] No tasks claimed (already being processed by another instance)")
-        return
-      }
-
-      console.log(`[v0] ✓ Successfully claimed ${claimedTasks.length} tasks for processing`)
-      claimedTasks.forEach((task: any, index: number) => {
-        console.log(`[v0]   ${index + 1}. ${task.task_type} (ID: ${task.id})`)
-      })
-
-      // Get default behavior pattern
-      console.log("[v0] Fetching behavior pattern...")
-      const { data: behaviorPattern, error: behaviorError } = await supabase
-        .from("behavior_patterns")
-        .select("*")
-        .eq("is_default", true)
-        .single()
-
-      if (behaviorError) {
-        console.error("[v0] ❌ Error fetching behavior pattern:", behaviorError)
-        throw behaviorError
-      }
-      console.log("[v0] ✓ Behavior pattern loaded")
-
-      console.log("[v0] Fetching GoLogin mode setting...")
-      const { data: modeSetting } = await supabase.from("settings").select("value").eq("key", "gologin_mode").single()
-
-      const userMode = (modeSetting?.value || "cloud") as "cloud" | "local"
-      const mode = getEnvironmentMode(userMode)
-      console.log(`[v0] ✓ GoLogin mode: ${mode}`)
-
-      if (this.maxConcurrentTasks === 1) {
-        // Sequential processing (original behavior)
-        console.log("[v0] Processing tasks sequentially...")
-        for (const task of claimedTasks) {
-          await this.processTask(task, behaviorPattern, mode, true) // Pass skipStatusUpdate=true
+        if (tasksError) {
+          console.error("[v0] ❌ Error fetching tasks:", tasksError)
+          throw tasksError
         }
-      } else {
-        // Concurrent processing with limit
-        console.log(`[v0] Processing tasks with concurrency limit of ${this.maxConcurrentTasks}...`)
-        await this.processConcurrent(claimedTasks, behaviorPattern, mode)
+
+        if (!tasks || tasks.length === 0) {
+          console.log(`[v0] ✓ No more pending tasks (processed ${totalProcessed} total)`)
+          break // Exit the loop when no more tasks
+        }
+
+        console.log(`[v0] ✓ Found ${tasks.length} pending tasks in batch ${batchNumber}`)
+
+        // This prevents multiple processors from processing the same tasks
+        const taskIds = tasks.map((t: any) => t.id)
+        const { data: claimedTasks, error: claimError } = await (adminClient.from("automation_tasks") as any)
+          .update({
+            status: "running",
+            started_at: new Date().toISOString(),
+          })
+          .in("id", taskIds)
+          .eq("status", "pending") // Only update if still pending
+          .select()
+
+        if (claimError) {
+          console.error("[v0] ❌ Error claiming tasks:", claimError)
+          throw claimError
+        }
+
+        if (!claimedTasks || claimedTasks.length === 0) {
+          console.log("[v0] No tasks claimed (already being processed by another instance)")
+          continue // Try fetching next batch
+        }
+
+        console.log(`[v0] ✓ Successfully claimed ${claimedTasks.length} tasks for processing`)
+        claimedTasks.forEach((task: any, index: number) => {
+          console.log(`[v0]   ${index + 1}. ${task.task_type} (ID: ${task.id})`)
+        })
+
+        // Get default behavior pattern (only once per batch)
+        if (batchNumber === 1) {
+          console.log("[v0] Fetching behavior pattern...")
+        }
+        const { data: behaviorPattern, error: behaviorError } = await (adminClient.from("behavior_patterns") as any)
+          .select("*")
+          .eq("is_default", true)
+          .single()
+
+        if (behaviorError) {
+          console.error("[v0] ❌ Error fetching behavior pattern:", behaviorError)
+          throw behaviorError
+        }
+        if (batchNumber === 1) {
+          console.log("[v0] ✓ Behavior pattern loaded")
+        }
+
+        if (batchNumber === 1) {
+          console.log("[v0] Fetching GoLogin mode setting...")
+        }
+        const { data: modeSetting } = await (adminClient.from("settings") as any)
+          .select("value")
+          .eq("key", "gologin_mode")
+          .single()
+
+        const userMode = (modeSetting?.value || "cloud") as "cloud" | "local"
+        const mode = getEnvironmentMode(userMode)
+        if (batchNumber === 1) {
+          console.log(`[v0] ✓ GoLogin mode: ${mode}`)
+        }
+
+        if (this.maxConcurrentTasks === 1) {
+          // Sequential processing (original behavior)
+          console.log(`[v0] Processing batch ${batchNumber} tasks sequentially...`)
+          for (const task of claimedTasks) {
+            await this.processTask(task, behaviorPattern, mode, true)
+          }
+        } else {
+          // Concurrent processing with limit
+          console.log(
+            `[v0] Processing batch ${batchNumber} tasks with concurrency limit of ${this.maxConcurrentTasks}...`,
+          )
+          await this.processConcurrent(claimedTasks, behaviorPattern, mode)
+        }
+
+        totalProcessed += claimedTasks.length
+        console.log(`[v0] ✓ Batch ${batchNumber} completed (${claimedTasks.length} tasks)`)
+        console.log(`[v0] Total processed so far: ${totalProcessed}`)
+
+        // Continue to next batch
       }
 
       console.log("[v0] ========================================")
-      console.log("[v0] ✓ Task queue processing completed")
+      console.log(`[v0] ✓ Task queue processing completed - ${totalProcessed} tasks processed`)
       console.log("[v0] ========================================")
     } catch (error: any) {
       console.error("[v0] ========================================")
@@ -165,12 +190,11 @@ export class TaskQueue {
     console.log(`[v0] ========================================`)
 
     try {
-      const supabase = await getSupabaseServerClient()
+      const adminClient = getSupabaseAdminClient()
 
       if (!task.profile_id) {
         console.log(`[v0] ⚠️ Task ${task.id} has no profile_id, marking as failed`)
-        await supabase
-          .from("automation_tasks")
+        await (adminClient.from("automation_tasks") as any)
           .update({
             status: "failed",
             completed_at: new Date().toISOString(),
@@ -181,25 +205,54 @@ export class TaskQueue {
         return
       }
 
-      // Get profile
+      // Try to find profile by database ID first (for local profiles and direct references)
       console.log(`[v0] Fetching profile ${task.profile_id}...`)
-      const { data: profile, error: profileError } = await supabase
-        .from("gologin_profiles")
+      let { data: profile, error: profileError } = await (adminClient.from("gologin_profiles") as any)
         .select("*")
         .eq("id", task.profile_id)
-        .single()
+        .maybeSingle()
+
+      // If not found by database ID, try by profile_id field (for GoLogin profiles)
+      if (!profile && !profileError) {
+        console.log(`[v0] Profile not found by database ID, trying profile_id field...`)
+        const result = await (adminClient.from("gologin_profiles") as any)
+          .select("*")
+          .eq("profile_id", task.profile_id)
+          .maybeSingle()
+
+        profile = result.data
+        profileError = result.error
+      }
 
       if (profileError) {
         console.error("[v0] ❌ Error fetching profile:", profileError)
         throw profileError
       }
-      console.log(`[v0] ✓ Profile loaded: ${profile.profile_name}`)
+
+      if (!profile) {
+        const errorMsg = `Profile ${task.profile_id} not found in database. It may have been deleted or not synced yet.`
+        console.log(`[v0] ⚠️ ${errorMsg}`)
+        console.log(`[v0] Marking task as failed and continuing...`)
+
+        await (adminClient.from("automation_tasks") as any)
+          .update({
+            status: "failed",
+            completed_at: new Date().toISOString(),
+            error_message: errorMsg,
+          })
+          .eq("id", task.id)
+
+        console.log(`[v0] ✓ Task marked as failed, continuing to next task`)
+        console.log(`[v0] ========================================`)
+        return // Continue to next task instead of throwing
+      }
+
+      console.log(`[v0] ✓ Profile loaded: ${profile.profile_name} (type: ${profile.profile_type || "gologin"})`)
 
       if (!skipStatusUpdate) {
         // Update task status to running
         console.log("[v0] Updating task status to 'running'...")
-        await supabase
-          .from("automation_tasks")
+        await (adminClient.from("automation_tasks") as any)
           .update({
             status: "running",
             started_at: new Date().toISOString(),
@@ -210,7 +263,7 @@ export class TaskQueue {
 
       // Update profile status
       console.log("[v0] Updating profile status to 'running'...")
-      await supabase.from("gologin_profiles").update({ status: "running" }).eq("id", profile.id)
+      await (adminClient.from("gologin_profiles") as any).update({ status: "running" }).eq("id", profile.id)
       console.log("[v0] ✓ Profile status updated")
 
       console.log("[v0] [DEBUG] Task type:", task.task_type)
@@ -260,30 +313,12 @@ export class TaskQueue {
       console.log("[v0] [DEBUG] Task type:", task.task_type)
       console.log("[v0] [DEBUG] Result object:", JSON.stringify(result, null, 2))
 
-      if (
-        (task.task_type === "check_gmail_status" ||
-          task.task_type === "setup_gmail" ||
-          task.task_type === "check_inbox") &&
-        result.result
-      ) {
-        console.log("[v0] [DEBUG] Gmail task detected, preparing profile update...")
+      if ((task.task_type === "check_gmail_status" || task.task_type === "setup_gmail") && result.result) {
+        console.log("[v0] [DEBUG] Gmail status check detected, preparing profile update...")
         console.log("[v0] [DEBUG] Result.result:", JSON.stringify(result.result, null, 2))
 
-        // For check_inbox, derive status from success
-        let gmailStatus: string
-        let gmailMessage: string | undefined
-
-        if (task.task_type === "check_inbox") {
-          // If check_inbox succeeded, Gmail is accessible
-          gmailStatus = result.success ? "ok" : "error"
-          gmailMessage = result.success
-            ? `Inbox checked successfully. ${result.result.unreadCount || 0} unread emails.`
-            : result.error || "Failed to check inbox"
-        } else {
-          // For check_gmail_status and setup_gmail, use the status from result
-          gmailStatus = result.result.status
-          gmailMessage = result.result.message
-        }
+        const gmailStatus = result.result.status
+        const gmailMessage = result.result.message
 
         console.log("[v0] [DEBUG] Updating profile with Gmail status:", {
           gmail_status: gmailStatus,
@@ -291,7 +326,6 @@ export class TaskQueue {
           gmail_status_message: gmailMessage,
         })
 
-        const adminClient = getSupabaseAdminClient()
         const { data: updateData, error: updateError } = await (adminClient.from("gologin_profiles") as any)
           .update({
             gmail_status: gmailStatus,
@@ -307,13 +341,12 @@ export class TaskQueue {
           console.log("[v0] [DEBUG] ✓ Gmail status updated successfully:", updateData)
         }
       } else {
-        console.log("[v0] [DEBUG] Not a Gmail-related task or no result data")
+        console.log("[v0] [DEBUG] Not a Gmail status check or setup task or no result data")
       }
 
       // Update task status
       console.log("[v0] Updating task final status...")
-      await supabase
-        .from("automation_tasks")
+      await (adminClient.from("automation_tasks") as any)
         .update({
           status: result.success ? "completed" : "failed",
           completed_at: new Date().toISOString(),
@@ -324,8 +357,7 @@ export class TaskQueue {
 
       // Update profile status and last run
       console.log("[v0] Updating profile final status...")
-      await supabase
-        .from("gologin_profiles")
+      await (adminClient.from("gologin_profiles") as any)
         .update({
           status: result.success ? "idle" : "error",
           last_run: new Date().toISOString(),
@@ -335,7 +367,7 @@ export class TaskQueue {
 
       // Log activity
       console.log("[v0] Creating activity log...")
-      await supabase.from("activity_logs").insert({
+      await (adminClient.from("activity_logs") as any).insert({
         profile_id: profile.id,
         task_id: task.id,
         action: task.task_type,
@@ -361,10 +393,8 @@ export class TaskQueue {
       console.error(`[v0] Error stack:`, error.stack)
       console.error(`[v0] ========================================`)
 
-      // Update task as failed
-      const supabase = await getSupabaseServerClient()
-      await supabase
-        .from("automation_tasks")
+      const adminClient = getSupabaseAdminClient()
+      await (adminClient.from("automation_tasks") as any)
         .update({
           status: "failed",
           completed_at: new Date().toISOString(),
@@ -373,7 +403,7 @@ export class TaskQueue {
         .eq("id", task.id)
 
       // Update profile status
-      await supabase.from("gologin_profiles").update({ status: "error" }).eq("id", task.profile_id)
+      await (adminClient.from("gologin_profiles") as any).update({ status: "error" }).eq("id", task.profile_id)
     }
   }
 

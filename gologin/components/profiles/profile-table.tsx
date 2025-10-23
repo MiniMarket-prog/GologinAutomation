@@ -22,6 +22,8 @@ import {
   ExternalLink,
   Monitor,
   Cloud,
+  Eye,
+  EyeOff,
 } from "lucide-react"
 import { AddProfileDialog } from "@/components/profiles/add-profile-dialog"
 import { SyncProfilesDialog } from "@/components/profiles/sync-profiles-dialog"
@@ -61,6 +63,7 @@ export function ProfileTable() {
   const [folders, setFolders] = useState<FolderWithType[]>([])
   const [launchingProfiles, setLaunchingProfiles] = useState<Set<string>>(new Set())
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
+  const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set()) // Added state to track visible passwords
 
   const { profiles, total, totalPages, isLoading, mutate } = useProfiles(
     page,
@@ -164,6 +167,18 @@ export function ProfileTable() {
     }
   }
 
+  const togglePasswordVisibility = (profileId: string) => {
+    setVisiblePasswords((prev) => {
+      const next = new Set(prev)
+      if (next.has(profileId)) {
+        next.delete(profileId)
+      } else {
+        next.add(profileId)
+      }
+      return next
+    })
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -230,6 +245,7 @@ export function ProfileTable() {
               <TableHead>Profile Name</TableHead>
               <TableHead>Folder</TableHead>
               <TableHead>Gmail Email</TableHead>
+              <TableHead>Gmail Password</TableHead> {/* Added password column header */}
               <TableHead>Gmail Status</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last Run</TableHead>
@@ -239,7 +255,7 @@ export function ProfileTable() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-muted-foreground">
                   Loading profiles...
                 </TableCell>
               </TableRow>
@@ -250,6 +266,7 @@ export function ProfileTable() {
                   gmailStatusConfig[gmailStatus as keyof typeof gmailStatusConfig] || gmailStatusConfig.unknown
                 const StatusIcon = statusConfig.icon
                 const isLaunching = launchingProfiles.has(profile.id)
+                const isPasswordVisible = visiblePasswords.has(profile.id) // Check if password is visible
 
                 return (
                   <TableRow key={profile.id || profile.profile_id || `profile-${Math.random()}`}>
@@ -278,6 +295,25 @@ export function ProfileTable() {
                       )}
                     </TableCell>
                     <TableCell>{profile.gmail_email || "-"}</TableCell>
+                    <TableCell>
+                      {profile.gmail_password ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-mono">
+                            {isPasswordVisible ? profile.gmail_password : "••••••••"}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => togglePasswordVisibility(profile.id)}
+                          >
+                            {isPasswordVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {profile.gmail_status ? (
                         <div className="space-y-1">
@@ -344,7 +380,7 @@ export function ProfileTable() {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-muted-foreground">
                   No profiles found
                 </TableCell>
               </TableRow>

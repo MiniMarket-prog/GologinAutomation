@@ -27,6 +27,7 @@ import {
 } from "lucide-react"
 import { AddProfileDialog } from "@/components/profiles/add-profile-dialog"
 import { SyncProfilesDialog } from "@/components/profiles/sync-profiles-dialog"
+import { EditProfileDialog } from "@/components/profiles/edit-profile-dialog"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import type { GoLoginProfile } from "@/lib/types"
 
@@ -64,6 +65,7 @@ export function ProfileTable() {
   const [launchingProfiles, setLaunchingProfiles] = useState<Set<string>>(new Set())
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set()) // Added state to track visible passwords
+  const [editingProfile, setEditingProfile] = useState<GoLoginProfile | null>(null) // Added state for edit dialog
 
   const { profiles, total, totalPages, isLoading, mutate } = useProfiles(
     page,
@@ -352,6 +354,10 @@ export function ProfileTable() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => setEditingProfile(profile)}>
+                            <ExternalLink className="mr-2 h-4 w-4" />
+                            Edit Profile
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleLaunchProfile(profile.id)} disabled={isLaunching}>
                             <ExternalLink className="mr-2 h-4 w-4" />
                             {isLaunching ? "Launching..." : "Launch in Local Mode"}
@@ -403,6 +409,15 @@ export function ProfileTable() {
             </Button>
           </div>
         </div>
+      )}
+
+      {editingProfile && (
+        <EditProfileDialog
+          profile={editingProfile}
+          open={!!editingProfile}
+          onOpenChange={(open) => !open && setEditingProfile(null)}
+          onSuccess={mutate}
+        />
       )}
     </div>
   )

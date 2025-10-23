@@ -26,22 +26,16 @@ export interface GoLoginProfile {
 }
 
 export interface LocalProfileConfig {
-  user_data_dir?: string // Path to Chrome user data directory
+  user_data_dir?: string // Path to browser user data directory
   proxy?: {
     server: string
     username?: string
     password?: string
   }
-  browser_args?: string[] // Additional Chrome arguments
+  browser_args?: string[] // Additional browser arguments
   viewport?: {
     width: number
     height: number
-  }
-  window_size?: {
-    width: number
-    height: number
-    x?: number // Window X position on screen
-    y?: number // Window Y position on screen
   }
   user_agent?: string
 }

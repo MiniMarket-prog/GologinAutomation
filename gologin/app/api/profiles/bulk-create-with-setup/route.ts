@@ -2,6 +2,7 @@ import { getSupabaseServerClient } from "@/lib/supabase/server"
 import { getSupabaseAdminClient } from "@/lib/supabase/admin"
 import { NextResponse } from "next/server"
 import { createProfile, createFolder } from "@/lib/gologin/api"
+import crypto from "crypto"
 
 export async function POST(request: Request) {
   try {
@@ -30,19 +31,51 @@ export async function POST(request: Request) {
     console.log(`[v0] Found database user ID: ${dbUser.id} for email: ${user.email}`)
 
     const body = await request.json()
-    const { profiles, folderName, profileType = "gologin", localConfig } = body
+    const { csvData, folderName, profileType = "gologin", localConfig } = body
 
-    if (!profiles || !Array.isArray(profiles) || profiles.length === 0) {
-      return NextResponse.json({ error: "No profiles provided" }, { status: 400 })
+    if (!csvData) {
+      return NextResponse.json({ error: "No CSV data provided" }, { status: 400 })
     }
 
     if (!folderName) {
       return NextResponse.json({ error: "Folder name is required" }, { status: 400 })
     }
 
+    interface ProfileData {
+      email: string
+      password: string
+      recovery?: string
+      proxy?: {
+        server: string
+        username?: string
+        password?: string
+      }
+    }
+
+    const lines = csvData.trim().split("\n")
+    const profiles = lines
+      .map((line: string) => {
+        const parts = line.split(",").map((s: string) => s.trim())
+        const [email, password, recovery, proxyIp, proxyUsername, proxyPassword, proxyPort] = parts
+
+        const profile: ProfileData = { email, password, recovery }
+
+        // If proxy IP and port are provided, construct the proxy server URL
+        if (proxyIp && proxyPort) {
+          profile.proxy = {
+            server: `http://${proxyIp}:${proxyPort}`,
+            username: proxyUsername || undefined,
+            password: proxyPassword || undefined,
+          }
+        }
+
+        return profile
+      })
+      .filter((p: ProfileData) => p.email && p.password)
+
     console.log(`[v0] Creating ${profiles.length} ${profileType} profiles in folder: ${folderName}`)
 
-    const emailsToCheck = profiles.map((p) => p.email).filter(Boolean)
+    const emailsToCheck = profiles.map((p: ProfileData) => p.email).filter(Boolean)
     const adminSupabase = getSupabaseAdminClient()
 
     const { data: existingProfiles, error: checkError } = await (adminSupabase as any)
@@ -56,7 +89,7 @@ export async function POST(request: Request) {
 
     const existingEmails = new Set(existingProfiles?.map((p: any) => p.gmail_email) || [])
     const skippedEmails: string[] = []
-    const profilesToCreate = profiles.filter((p) => {
+    const profilesToCreate = profiles.filter((p: ProfileData) => {
       if (existingEmails.has(p.email)) {
         skippedEmails.push(p.email)
         return false
@@ -122,7 +155,7 @@ export async function POST(request: Request) {
 
     for (const profileData of profilesToCreate) {
       try {
-        const { email, password, recovery } = profileData
+        const { email, password, recovery, proxy } = profileData
 
         if (!email || !password) {
           results.failed++
@@ -136,14 +169,38 @@ export async function POST(request: Request) {
 
         let profileId: string
         let dbProfileType: "gologin" | "local"
+        let profileInsert: any
 
         if (profileType === "local") {
-          // Create local profile - no GoLogin API call needed
+          const profileProxy =
+            proxy ||
+            (localConfig?.proxy
+              ? {
+                  server: localConfig.proxy.server,
+                  username: localConfig.proxy.username || undefined,
+                  password: localConfig.proxy.password || undefined,
+                }
+              : undefined)
+
           profileId = crypto.randomUUID()
           dbProfileType = "local"
           console.log(`[v0] ✓ Local profile ID generated: ${profileId}`)
+
+          profileInsert = {
+            profile_name: profileName,
+            gmail_email: email,
+            gmail_password: password,
+            recovery_email: recovery,
+            folder_name: folderName,
+            assigned_user_id: dbUser.id,
+            status: "idle",
+            profile_type: dbProfileType,
+            local_config: {
+              ...localConfig,
+              proxy: profileProxy,
+            },
+          }
         } else {
-          // Create GoLogin profile
           const gologinProfile = await createProfile({
             name: profileName,
             folderId: folderId,
@@ -155,25 +212,18 @@ export async function POST(request: Request) {
           console.log(`[v0]   - Profile Name: ${profileName}`)
           console.log(`[v0]   - Folder: ${folderName}`)
           console.log(`[v0]   - Check in GoLogin: https://app.gologin.com/profile/${gologinProfile.id}`)
-        }
 
-        const profileInsert: any = {
-          profile_name: profileName,
-          gmail_email: email,
-          gmail_password: password,
-          recovery_email: recovery,
-          folder_name: folderName,
-          assigned_user_id: dbUser.id,
-          status: "idle",
-          profile_type: dbProfileType,
-        }
-
-        if (dbProfileType === "gologin") {
-          profileInsert.profile_id = profileId
-        }
-
-        if (dbProfileType === "local" && localConfig) {
-          profileInsert.local_config = localConfig
+          profileInsert = {
+            profile_name: profileName,
+            gmail_email: email,
+            gmail_password: password,
+            recovery_email: recovery,
+            folder_name: folderName,
+            assigned_user_id: dbUser.id,
+            status: "idle",
+            profile_type: dbProfileType,
+            profile_id: profileId,
+          }
         }
 
         const { data: profile, error: dbError } = await (adminSupabase as any)

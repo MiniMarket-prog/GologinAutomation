@@ -53,15 +53,12 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     autoGenerateProfileName: true,
     assignToUser: "",
     userAgent: "",
-    proxyServer: "",
+    proxyIp: "",
+    proxyPort: "",
     proxyUsername: "",
     proxyPassword: "",
     viewportWidth: "1366",
     viewportHeight: "768",
-    windowWidth: "1366",
-    windowHeight: "768",
-    windowX: "",
-    windowY: "",
   })
 
   const [bulkForm, setBulkForm] = useState({
@@ -74,13 +71,10 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     viewportWidth: "1366",
     viewportHeight: "768",
     userAgent: "",
-    proxyServer: "",
+    proxyIp: "",
+    proxyPort: "",
     proxyUsername: "",
     proxyPassword: "",
-    windowWidth: "1366",
-    windowHeight: "768",
-    windowX: "",
-    windowY: "",
   })
 
   const [bulkResults, setBulkResults] = useState<{
@@ -176,21 +170,18 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
       }
 
       if (profileType === "local") {
+        const proxyServer =
+          singleForm.proxyIp && singleForm.proxyPort ? `http://${singleForm.proxyIp}:${singleForm.proxyPort}` : ""
+
         body.localConfig = {
           user_agent: singleForm.userAgent || undefined,
           viewport: {
             width: Number.parseInt(singleForm.viewportWidth) || 1366,
             height: Number.parseInt(singleForm.viewportHeight) || 768,
           },
-          window_size: {
-            width: Number.parseInt(singleForm.windowWidth) || 1366,
-            height: Number.parseInt(singleForm.windowHeight) || 768,
-            ...(singleForm.windowX && { x: Number.parseInt(singleForm.windowX) }),
-            ...(singleForm.windowY && { y: Number.parseInt(singleForm.windowY) }),
-          },
-          ...(singleForm.proxyServer && {
+          ...(proxyServer && {
             proxy: {
-              server: singleForm.proxyServer,
+              server: proxyServer,
               username: singleForm.proxyUsername || undefined,
               password: singleForm.proxyPassword || undefined,
             },
@@ -222,15 +213,12 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         autoGenerateProfileName: true,
         assignToUser: "",
         userAgent: "",
-        proxyServer: "",
+        proxyIp: "",
+        proxyPort: "",
         proxyUsername: "",
         proxyPassword: "",
         viewportWidth: "1366",
         viewportHeight: "768",
-        windowWidth: "1366",
-        windowHeight: "768",
-        windowX: "",
-        windowY: "",
       })
       onSuccess?.()
     } catch (error) {
@@ -249,11 +237,13 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     try {
       const lines = bulkForm.csvData.trim().split("\n")
       const profiles = lines
-        .map((line) => {
-          const [email, password, recovery] = line.split(",").map((s) => s.trim())
-          return { email, password, recovery }
+        .map((line: string) => {
+          const [email, password, recovery, proxyIp, proxyUsername, proxyPassword, proxyPort] = line
+            .split(",")
+            .map((s: string) => s.trim())
+          return { email, password, recovery, proxyIp, proxyUsername, proxyPassword, proxyPort }
         })
-        .filter((p) => p.email && p.password)
+        .filter((p: any) => p.email && p.password) // Assuming ProfileData interface can be inferred or is not strictly needed here for filtering
 
       if (profiles.length === 0) {
         throw new Error("No valid profiles found in CSV data")
@@ -273,21 +263,18 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
       }
 
       if (bulkForm.profileType === "local") {
+        const proxyServer =
+          bulkForm.proxyIp && bulkForm.proxyPort ? `http://${bulkForm.proxyIp}:${bulkForm.proxyPort}` : ""
+
         requestBody.localConfig = {
           viewport: {
             width: Number.parseInt(bulkForm.viewportWidth) || 1366,
             height: Number.parseInt(bulkForm.viewportHeight) || 768,
           },
-          window_size: {
-            width: Number.parseInt(bulkForm.windowWidth) || 1366,
-            height: Number.parseInt(bulkForm.windowHeight) || 768,
-            ...(bulkForm.windowX && { x: Number.parseInt(bulkForm.windowX) }),
-            ...(bulkForm.windowY && { y: Number.parseInt(bulkForm.windowY) }),
-          },
           ...(bulkForm.userAgent && { user_agent: bulkForm.userAgent }),
-          ...(bulkForm.proxyServer && {
+          ...(proxyServer && {
             proxy: {
-              server: bulkForm.proxyServer,
+              server: proxyServer,
               username: bulkForm.proxyUsername || undefined,
               password: bulkForm.proxyPassword || undefined,
             },
@@ -319,13 +306,10 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         viewportWidth: "1366",
         viewportHeight: "768",
         userAgent: "",
-        proxyServer: "",
+        proxyIp: "",
+        proxyPort: "",
         proxyUsername: "",
         proxyPassword: "",
-        windowWidth: "1366",
-        windowHeight: "768",
-        windowX: "",
-        windowY: "",
       })
 
       onSuccess?.()
@@ -454,9 +438,7 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
 
               {profileType === "local" && (
                 <div className="space-y-4 p-4 border rounded-lg bg-muted/50">
-                  <h4 className="font-medium text-sm">Local Browser Configuration (Optional)</h4>
-
-                  {/* Removed busterExtensionPath field */}
+                  <h4 className="font-medium text-sm">Local Browser Configuration (Chrome Only)</h4>
 
                   <div className="space-y-2">
                     <Label htmlFor="userAgent">User Agent (Optional)</Label>
@@ -489,68 +471,28 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Window Size & Position</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Configure browser window size and position for multi-window setups
-                    </p>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="windowWidth">Window Width</Label>
-                        <Input
-                          id="windowWidth"
-                          type="number"
-                          value={singleForm.windowWidth}
-                          onChange={(e) => setSingleForm({ ...singleForm, windowWidth: e.target.value })}
-                          placeholder="1366"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="windowHeight">Window Height</Label>
-                        <Input
-                          id="windowHeight"
-                          type="number"
-                          value={singleForm.windowHeight}
-                          onChange={(e) => setSingleForm({ ...singleForm, windowHeight: e.target.value })}
-                          placeholder="768"
-                        />
-                      </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="proxyIp">Proxy IP (Optional)</Label>
+                      <Input
+                        id="proxyIp"
+                        value={singleForm.proxyIp}
+                        onChange={(e) => setSingleForm({ ...singleForm, proxyIp: e.target.value })}
+                        placeholder="102.129.208.102"
+                      />
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="windowX">Window X Position (Optional)</Label>
-                        <Input
-                          id="windowX"
-                          type="number"
-                          value={singleForm.windowX}
-                          onChange={(e) => setSingleForm({ ...singleForm, windowX: e.target.value })}
-                          placeholder="0"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="windowY">Window Y Position (Optional)</Label>
-                        <Input
-                          id="windowY"
-                          type="number"
-                          value={singleForm.windowY}
-                          onChange={(e) => setSingleForm({ ...singleForm, windowY: e.target.value })}
-                          placeholder="0"
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="proxyPort">Proxy Port</Label>
+                      <Input
+                        id="proxyPort"
+                        value={singleForm.proxyPort}
+                        onChange={(e) => setSingleForm({ ...singleForm, proxyPort: e.target.value })}
+                        placeholder="12323"
+                      />
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="proxyServer">Proxy Server (Optional)</Label>
-                    <Input
-                      id="proxyServer"
-                      value={singleForm.proxyServer}
-                      onChange={(e) => setSingleForm({ ...singleForm, proxyServer: e.target.value })}
-                      placeholder="http://proxy.example.com:8080"
-                    />
-                  </div>
-
-                  {singleForm.proxyServer && (
+                  {singleForm.proxyIp && (
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="proxyUsername">Proxy Username</Label>
@@ -558,6 +500,7 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                           id="proxyUsername"
                           value={singleForm.proxyUsername}
                           onChange={(e) => setSingleForm({ ...singleForm, proxyUsername: e.target.value })}
+                          placeholder="14a03104f588b"
                         />
                       </div>
                       <div className="space-y-2">
@@ -567,6 +510,7 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                           type="password"
                           value={singleForm.proxyPassword}
                           onChange={(e) => setSingleForm({ ...singleForm, proxyPassword: e.target.value })}
+                          placeholder="c311b7035d"
                         />
                       </div>
                     </div>
@@ -720,18 +664,24 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                   id="csvData"
                   value={bulkForm.csvData}
                   onChange={(e) => setBulkForm({ ...bulkForm, csvData: e.target.value })}
-                  placeholder="email1@gmail.com,password123,recovery1@email.com&#10;email2@gmail.com,password456,recovery2@email.com"
+                  placeholder="email1@gmail.com,password123,recovery1@email.com,102.129.208.102,user1,pass1,12323&#10;email2@gmail.com,password456,recovery2@email.com,103.130.209.103,user2,pass2,12324"
                   rows={8}
                   required
                 />
-                <p className="text-sm text-muted-foreground">Format: email,password,recovery (one per line)</p>
+                <p className="text-sm text-muted-foreground">
+                  Format: email,password,recovery,proxy_ip,proxy_user,proxy_pass,proxy_port (one per line)
+                  <br />
+                  Example: email@gmail.com,pass123,recovery@email.com,102.129.208.102,proxyuser,proxypass,12323
+                  <br />
+                  Proxy fields are optional. Leave empty to use default proxy below.
+                </p>
               </div>
 
               {bulkForm.profileType === "local" && (
                 <div className="space-y-4 p-4 border rounded-lg bg-muted/50">
-                  <h4 className="font-medium text-sm">Local Browser Configuration (Applied to All Profiles)</h4>
-
-                  {/* Removed busterExtensionPath field */}
+                  <h4 className="font-medium text-sm">
+                    Local Browser Configuration (Chrome Only - Applied to All Profiles)
+                  </h4>
 
                   <div className="space-y-2">
                     <Label htmlFor="bulkUserAgent">User Agent (Optional)</Label>
@@ -764,84 +714,46 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Window Size & Position</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Configure browser window size and position for multi-window setups
-                    </p>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="bulkWindowWidth">Window Width</Label>
-                        <Input
-                          id="bulkWindowWidth"
-                          type="number"
-                          value={bulkForm.windowWidth}
-                          onChange={(e) => setBulkForm({ ...bulkForm, windowWidth: e.target.value })}
-                          placeholder="1366"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="bulkWindowHeight">Window Height</Label>
-                        <Input
-                          id="bulkWindowHeight"
-                          type="number"
-                          value={bulkForm.windowHeight}
-                          onChange={(e) => setBulkForm({ ...bulkForm, windowHeight: e.target.value })}
-                          placeholder="768"
-                        />
-                      </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="bulkProxyIp">Default Proxy IP (Optional)</Label>
+                      <Input
+                        id="bulkProxyIp"
+                        value={bulkForm.proxyIp}
+                        onChange={(e) => setBulkForm({ ...bulkForm, proxyIp: e.target.value })}
+                        placeholder="102.129.208.102"
+                      />
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="bulkWindowX">Window X Position (Optional)</Label>
-                        <Input
-                          id="bulkWindowX"
-                          type="number"
-                          value={bulkForm.windowX}
-                          onChange={(e) => setBulkForm({ ...bulkForm, windowX: e.target.value })}
-                          placeholder="0"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="bulkWindowY">Window Y Position (Optional)</Label>
-                        <Input
-                          id="bulkWindowY"
-                          type="number"
-                          value={bulkForm.windowY}
-                          onChange={(e) => setBulkForm({ ...bulkForm, windowY: e.target.value })}
-                          placeholder="0"
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="bulkProxyPort">Default Proxy Port</Label>
+                      <Input
+                        id="bulkProxyPort"
+                        value={bulkForm.proxyPort}
+                        onChange={(e) => setBulkForm({ ...bulkForm, proxyPort: e.target.value })}
+                        placeholder="12323"
+                      />
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="bulkProxyServer">Proxy Server (Optional)</Label>
-                    <Input
-                      id="bulkProxyServer"
-                      value={bulkForm.proxyServer}
-                      onChange={(e) => setBulkForm({ ...bulkForm, proxyServer: e.target.value })}
-                      placeholder="http://proxy.example.com:8080"
-                    />
-                  </div>
-
-                  {bulkForm.proxyServer && (
+                  {bulkForm.proxyIp && (
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="bulkProxyUsername">Proxy Username</Label>
+                        <Label htmlFor="bulkProxyUsername">Default Proxy Username</Label>
                         <Input
                           id="bulkProxyUsername"
                           value={bulkForm.proxyUsername}
                           onChange={(e) => setBulkForm({ ...bulkForm, proxyUsername: e.target.value })}
+                          placeholder="14a03104f588b"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="bulkProxyPassword">Proxy Password</Label>
+                        <Label htmlFor="bulkProxyPassword">Default Proxy Password</Label>
                         <Input
                           id="bulkProxyPassword"
                           type="password"
                           value={bulkForm.proxyPassword}
                           onChange={(e) => setBulkForm({ ...bulkForm, proxyPassword: e.target.value })}
+                          placeholder="c311b7035d"
                         />
                       </div>
                     </div>

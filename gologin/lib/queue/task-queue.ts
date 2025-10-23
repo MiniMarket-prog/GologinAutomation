@@ -4,6 +4,13 @@ import { TaskExecutor } from "@/lib/automation/task-executor"
 import type { AutomationTask, BehaviorPattern } from "@/lib/types"
 import { getEnvironmentMode } from "@/lib/utils/environment"
 
+export interface BatchProcessResult {
+  processedCount: number
+  remainingCount: number
+  hasMore: boolean
+  totalProcessed: number
+}
+
 export class TaskQueue {
   private isProcessing = false
   private gologinApiKey: string
@@ -14,137 +21,126 @@ export class TaskQueue {
     this.maxConcurrentTasks = maxConcurrentTasks
   }
 
-  async processPendingTasks() {
+  async processPendingTasks(maxTasksPerBatch = 10): Promise<BatchProcessResult> {
     if (this.isProcessing) {
       console.log("[v0] Queue already processing, skipping")
-      return
+      return { processedCount: 0, remainingCount: 0, hasMore: false, totalProcessed: 0 }
     }
 
     this.isProcessing = true
     console.log("[v0] ========================================")
-    console.log("[v0] Starting task queue processing")
+    console.log("[v0] Starting batch processing")
+    console.log(`[v0] Max tasks per batch: ${maxTasksPerBatch}`)
     console.log(`[v0] Max concurrent tasks: ${this.maxConcurrentTasks}`)
     console.log("[v0] ========================================")
 
     try {
       const adminClient = getSupabaseAdminClient()
-      const fetchLimit = Math.max(20, this.maxConcurrentTasks * 4)
 
-      let totalProcessed = 0
-      let batchNumber = 0
+      console.log(`[v0] Fetching up to ${maxTasksPerBatch} pending tasks...`)
 
-      while (true) {
-        batchNumber++
-        console.log(`[v0] ----------------------------------------`)
-        console.log(`[v0] Batch ${batchNumber}: Fetching pending tasks...`)
-        console.log(`[v0] ----------------------------------------`)
+      const { data: tasks, error: tasksError } = await (adminClient.from("automation_tasks") as any)
+        .select("*")
+        .eq("status", "pending")
+        .or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`)
+        .order("priority", { ascending: false })
+        .order("scheduled_at", { ascending: true, nullsFirst: true })
+        .limit(maxTasksPerBatch)
 
-        const { data: tasks, error: tasksError } = await (adminClient.from("automation_tasks") as any)
-          .select("*")
-          .eq("status", "pending")
-          .or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`)
-          .order("priority", { ascending: false })
-          .order("scheduled_at", { ascending: true, nullsFirst: true })
-          .limit(fetchLimit)
-
-        if (tasksError) {
-          console.error("[v0] ❌ Error fetching tasks:", tasksError)
-          throw tasksError
-        }
-
-        if (!tasks || tasks.length === 0) {
-          console.log(`[v0] ✓ No more pending tasks (processed ${totalProcessed} total)`)
-          break // Exit the loop when no more tasks
-        }
-
-        console.log(`[v0] ✓ Found ${tasks.length} pending tasks in batch ${batchNumber}`)
-
-        // This prevents multiple processors from processing the same tasks
-        const taskIds = tasks.map((t: any) => t.id)
-        const { data: claimedTasks, error: claimError } = await (adminClient.from("automation_tasks") as any)
-          .update({
-            status: "running",
-            started_at: new Date().toISOString(),
-          })
-          .in("id", taskIds)
-          .eq("status", "pending") // Only update if still pending
-          .select()
-
-        if (claimError) {
-          console.error("[v0] ❌ Error claiming tasks:", claimError)
-          throw claimError
-        }
-
-        if (!claimedTasks || claimedTasks.length === 0) {
-          console.log("[v0] No tasks claimed (already being processed by another instance)")
-          continue // Try fetching next batch
-        }
-
-        console.log(`[v0] ✓ Successfully claimed ${claimedTasks.length} tasks for processing`)
-        claimedTasks.forEach((task: any, index: number) => {
-          console.log(`[v0]   ${index + 1}. ${task.task_type} (ID: ${task.id})`)
-        })
-
-        // Get default behavior pattern (only once per batch)
-        if (batchNumber === 1) {
-          console.log("[v0] Fetching behavior pattern...")
-        }
-        const { data: behaviorPattern, error: behaviorError } = await (adminClient.from("behavior_patterns") as any)
-          .select("*")
-          .eq("is_default", true)
-          .single()
-
-        if (behaviorError) {
-          console.error("[v0] ❌ Error fetching behavior pattern:", behaviorError)
-          throw behaviorError
-        }
-        if (batchNumber === 1) {
-          console.log("[v0] ✓ Behavior pattern loaded")
-        }
-
-        if (batchNumber === 1) {
-          console.log("[v0] Fetching GoLogin mode setting...")
-        }
-        const { data: modeSetting } = await (adminClient.from("settings") as any)
-          .select("value")
-          .eq("key", "gologin_mode")
-          .single()
-
-        const userMode = (modeSetting?.value || "cloud") as "cloud" | "local"
-        const mode = getEnvironmentMode(userMode)
-        if (batchNumber === 1) {
-          console.log(`[v0] ✓ GoLogin mode: ${mode}`)
-        }
-
-        if (this.maxConcurrentTasks === 1) {
-          // Sequential processing (original behavior)
-          console.log(`[v0] Processing batch ${batchNumber} tasks sequentially...`)
-          for (const task of claimedTasks) {
-            await this.processTask(task, behaviorPattern, mode, true)
-          }
-        } else {
-          // Concurrent processing with limit
-          console.log(
-            `[v0] Processing batch ${batchNumber} tasks with concurrency limit of ${this.maxConcurrentTasks}...`,
-          )
-          await this.processConcurrent(claimedTasks, behaviorPattern, mode)
-        }
-
-        totalProcessed += claimedTasks.length
-        console.log(`[v0] ✓ Batch ${batchNumber} completed (${claimedTasks.length} tasks)`)
-        console.log(`[v0] Total processed so far: ${totalProcessed}`)
-
-        // Continue to next batch
+      if (tasksError) {
+        console.error("[v0] ❌ Error fetching tasks:", tasksError)
+        throw tasksError
       }
 
+      if (!tasks || tasks.length === 0) {
+        console.log(`[v0] ✓ No pending tasks found`)
+        console.log("[v0] ========================================")
+        return { processedCount: 0, remainingCount: 0, hasMore: false, totalProcessed: 0 }
+      }
+
+      console.log(`[v0] ✓ Found ${tasks.length} pending tasks`)
+
+      // Claim tasks
+      const taskIds = tasks.map((t: any) => t.id)
+      const { data: claimedTasks, error: claimError } = await (adminClient.from("automation_tasks") as any)
+        .update({
+          status: "running",
+          started_at: new Date().toISOString(),
+        })
+        .in("id", taskIds)
+        .eq("status", "pending")
+        .select()
+
+      if (claimError) {
+        console.error("[v0] ❌ Error claiming tasks:", claimError)
+        throw claimError
+      }
+
+      if (!claimedTasks || claimedTasks.length === 0) {
+        console.log("[v0] No tasks claimed (already being processed)")
+        const { count } = await (adminClient.from("automation_tasks") as any)
+          .select("*", { count: "exact", head: true })
+          .eq("status", "pending")
+
+        return { processedCount: 0, remainingCount: count || 0, hasMore: (count || 0) > 0, totalProcessed: 0 }
+      }
+
+      console.log(`[v0] ✓ Successfully claimed ${claimedTasks.length} tasks`)
+
+      // Get behavior pattern
+      const { data: behaviorPattern, error: behaviorError } = await (adminClient.from("behavior_patterns") as any)
+        .select("*")
+        .eq("is_default", true)
+        .single()
+
+      if (behaviorError) {
+        console.error("[v0] ❌ Error fetching behavior pattern:", behaviorError)
+        throw behaviorError
+      }
+
+      // Get GoLogin mode
+      const { data: modeSetting } = await (adminClient.from("settings") as any)
+        .select("value")
+        .eq("key", "gologin_mode")
+        .single()
+
+      const userMode = (modeSetting?.value || "cloud") as "cloud" | "local"
+      const mode = getEnvironmentMode(userMode)
+
+      // Process tasks
+      if (this.maxConcurrentTasks === 1) {
+        console.log(`[v0] Processing ${claimedTasks.length} tasks sequentially...`)
+        for (const task of claimedTasks) {
+          await this.processTask(task, behaviorPattern, mode, true)
+        }
+      } else {
+        console.log(`[v0] Processing ${claimedTasks.length} tasks with concurrency ${this.maxConcurrentTasks}...`)
+        await this.processConcurrent(claimedTasks, behaviorPattern, mode)
+      }
+
+      const { count: remainingCount } = await (adminClient.from("automation_tasks") as any)
+        .select("*", { count: "exact", head: true })
+        .eq("status", "pending")
+
+      const hasMore = (remainingCount || 0) > 0
+
       console.log("[v0] ========================================")
-      console.log(`[v0] ✓ Task queue processing completed - ${totalProcessed} tasks processed`)
+      console.log(`[v0] ✓ Batch completed - ${claimedTasks.length} tasks processed`)
+      console.log(`[v0] Remaining pending tasks: ${remainingCount || 0}`)
       console.log("[v0] ========================================")
+
+      return {
+        processedCount: claimedTasks.length,
+        remainingCount: remainingCount || 0,
+        hasMore,
+        totalProcessed: claimedTasks.length,
+      }
     } catch (error: any) {
       console.error("[v0] ========================================")
-      console.error("[v0] ❌ Error processing task queue")
+      console.error("[v0] ❌ Error processing batch")
       console.error("[v0] Error:", error.message)
       console.error("[v0] ========================================")
+      throw error
     } finally {
       this.isProcessing = false
     }

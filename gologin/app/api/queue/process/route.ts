@@ -2,12 +2,15 @@ import { getSupabaseServerClient } from "@/lib/supabase/server"
 import { TaskQueue } from "@/lib/queue/task-queue"
 import { NextResponse } from "next/server"
 
+export const maxDuration = 60
+
 export async function POST(request: Request) {
   try {
     const supabase = await getSupabaseServerClient()
 
     const body = await request.json().catch(() => ({}))
     const maxConcurrentTasks = body.maxConcurrentTasks || 1
+    const maxTasksPerBatch = body.maxTasksPerBatch || 10
 
     const { data: apiKeySetting, error: settingsError } = await supabase
       .from("settings")
@@ -23,9 +26,13 @@ export async function POST(request: Request) {
     }
 
     const queue = new TaskQueue(apiKeySetting.value, maxConcurrentTasks)
-    await queue.processPendingTasks()
+    const result = await queue.processPendingTasks(maxTasksPerBatch)
 
-    return NextResponse.json({ success: true, message: "Queue processed" })
+    return NextResponse.json({
+      success: true,
+      message: "Batch processed",
+      ...result,
+    })
   } catch (error: any) {
     console.error("[v0] Error processing queue:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })

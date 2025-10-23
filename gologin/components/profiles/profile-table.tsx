@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import {
   MoreHorizontal,
   Search,
@@ -24,6 +25,7 @@ import {
   Cloud,
   Eye,
   EyeOff,
+  Globe,
 } from "lucide-react"
 import { AddProfileDialog } from "@/components/profiles/add-profile-dialog"
 import { SyncProfilesDialog } from "@/components/profiles/sync-profiles-dialog"
@@ -61,6 +63,7 @@ export function ProfileTable() {
   const [statusFilter, setStatusFilter] = useState<string>()
   const [gmailStatusFilter, setGmailStatusFilter] = useState<string>()
   const [folderFilter, setFolderFilter] = useState<string>()
+  const [proxyFilter, setProxyFilter] = useState<string>() // Added proxy filter state
   const [folders, setFolders] = useState<FolderWithType[]>([])
   const [launchingProfiles, setLaunchingProfiles] = useState<Set<string>>(new Set())
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
@@ -181,6 +184,43 @@ export function ProfileTable() {
     })
   }
 
+  const hasProxy = (profile: GoLoginProfile) => {
+    if (profile.profile_type === "local" && profile.local_config?.proxy?.server) {
+      return true
+    }
+    return false
+  }
+
+  const getProxyDetails = (profile: GoLoginProfile) => {
+    if (profile.profile_type === "local" && profile.local_config?.proxy) {
+      const proxy = profile.local_config.proxy
+      const server = proxy.server || ""
+      const username = proxy.username || ""
+
+      // Extract IP and port from server URL
+      const serverMatch = server.match(/(?:https?:\/\/)?([^:]+):(\d+)/)
+      const ip = serverMatch ? serverMatch[1] : server
+      const port = serverMatch ? serverMatch[2] : ""
+
+      return {
+        ip,
+        port,
+        username,
+        hasAuth: !!username,
+      }
+    }
+    return null
+  }
+
+  const filteredProfiles = profiles?.filter((profile) => {
+    if (proxyFilter === "with-proxy") {
+      return hasProxy(profile)
+    } else if (proxyFilter === "without-proxy") {
+      return !hasProxy(profile)
+    }
+    return true
+  })
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -205,6 +245,15 @@ export function ProfileTable() {
                 📁 {folder.name}
               </option>
             ))}
+          </select>
+          <select
+            value={proxyFilter || "all"}
+            onChange={(e) => setProxyFilter(e.target.value === "all" ? undefined : e.target.value)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[150px]"
+          >
+            <option value="all">All Proxies</option>
+            <option value="with-proxy">🌐 With Proxy</option>
+            <option value="without-proxy">No Proxy</option>
           </select>
           <select
             value={statusFilter || "all"}
@@ -261,29 +310,63 @@ export function ProfileTable() {
                   Loading profiles...
                 </TableCell>
               </TableRow>
-            ) : profiles && profiles.length > 0 ? (
-              profiles.map((profile) => {
+            ) : filteredProfiles && filteredProfiles.length > 0 ? (
+              filteredProfiles.map((profile) => {
                 const gmailStatus = profile.gmail_status || "unknown"
                 const statusConfig =
                   gmailStatusConfig[gmailStatus as keyof typeof gmailStatusConfig] || gmailStatusConfig.unknown
                 const StatusIcon = statusConfig.icon
                 const isLaunching = launchingProfiles.has(profile.id)
                 const isPasswordVisible = visiblePasswords.has(profile.id) // Check if password is visible
+                const proxyDetails = getProxyDetails(profile) // Get proxy details
 
                 return (
                   <TableRow key={profile.id || profile.profile_id || `profile-${Math.random()}`}>
                     <TableCell>
-                      {profile.profile_type === "local" ? (
-                        <div className="flex items-center gap-1.5 text-muted-foreground">
-                          <Monitor className="h-3.5 w-3.5" />
-                          <span className="text-xs">Local</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 text-muted-foreground">
-                          <Cloud className="h-3.5 w-3.5" />
-                          <span className="text-xs">GoLogin</span>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {profile.profile_type === "local" ? (
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <Monitor className="h-3.5 w-3.5" />
+                            <span className="text-xs">Local</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <Cloud className="h-3.5 w-3.5" />
+                            <span className="text-xs">GoLogin</span>
+                          </div>
+                        )}
+                        {proxyDetails && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Globe className="h-3.5 w-3.5 text-blue-500 cursor-help" />
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-[250px]">
+                                <div className="space-y-1 text-xs">
+                                  <div className="font-semibold">Proxy Configuration</div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-muted-foreground">IP:</span>
+                                    <span className="font-mono">{proxyDetails.ip}</span>
+                                  </div>
+                                  {proxyDetails.port && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-muted-foreground">Port:</span>
+                                      <span className="font-mono">{proxyDetails.port}</span>
+                                    </div>
+                                  )}
+                                  {proxyDetails.hasAuth && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-muted-foreground">User:</span>
+                                      <span className="font-mono">{proxyDetails.username}</span>
+                                    </div>
+                                  )}
+                                  <div className="text-green-500 text-[10px] mt-1">✓ Proxy Active</div>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="font-medium">{profile.profile_name}</TableCell>
                     <TableCell>
@@ -398,7 +481,7 @@ export function ProfileTable() {
       {totalPages && totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            Showing {profiles?.length || 0} of {total || 0} profiles
+            Showing {filteredProfiles?.length || 0} of {total || 0} profiles
           </p>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>

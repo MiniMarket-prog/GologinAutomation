@@ -71,7 +71,8 @@
     "http": "0.0.1-security",
     "url": "0.11.4",
     "os": "0.1.2",
-    "crypto": "1.0.1"
+    "crypto": "1.0.1",
+    "puppeteer": "24.26.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",

@@ -17,8 +17,9 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Plus, Upload, Loader2, Monitor, Cloud } from "lucide-react"
+import { Plus, Upload, Loader2, Monitor, Cloud, RefreshCw } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
+import { AdvancedFingerprintSettings } from "./advanced-fingerprint-settings"
 
 interface AddProfileDialogProps {
   onSuccess?: () => void
@@ -41,10 +42,32 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [profileType, setProfileType] = useState<"gologin" | "local">("gologin")
 
+  const [workingProxies, setWorkingProxies] = useState<
+    Array<{
+      id: string
+      name: string
+      proxy_server: string
+      proxy_port: number
+      proxy_username: string
+      proxy_password: string
+    }>
+  >([])
+  const [loadingProxies, setLoadingProxies] = useState(false)
+  const [recoveryEmails, setRecoveryEmails] = useState<
+    Array<{
+      id: string
+      email: string
+    }>
+  >([])
+  const [loadingRecoveryEmails, setLoadingRecoveryEmails] = useState(false)
+
   const [singleForm, setSingleForm] = useState({
+    emailPrefix: "", // Added email prefix for generator
+    emailDomain: "gmail.com", // Added email domain with gmail as default
     email: "",
     password: "",
     recovery: "",
+    proxyId: "", // Added proxy selection
     folderOption: "existing" as "existing" | "new",
     existingFolder: "",
     newFolderName: "",
@@ -59,6 +82,7 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     proxyPassword: "",
     viewportWidth: "1366",
     viewportHeight: "768",
+    fingerprintSettings: {}, // Initialize fingerprint settings
   })
 
   const [bulkForm, setBulkForm] = useState({
@@ -75,6 +99,7 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     proxyPort: "",
     proxyUsername: "",
     proxyPassword: "",
+    fingerprintSettings: {}, // Initialize fingerprint settings
   })
 
   const [bulkResults, setBulkResults] = useState<{
@@ -89,8 +114,12 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     if (open) {
       loadFolders()
       checkAdminStatus()
+      if (profileType === "local") {
+        loadWorkingProxies()
+        loadRecoveryEmails()
+      }
     }
-  }, [open])
+  }, [open, profileType])
 
   const loadFolders = async () => {
     setLoadingFolders(true)
@@ -132,6 +161,71 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
     }
   }
 
+  const generateRandomEmailPrefix = () => {
+    const adjectives = ["happy", "sunny", "cool", "smart", "quick", "bright", "lucky", "swift"]
+    const nouns = ["cat", "dog", "bird", "fish", "lion", "bear", "wolf", "fox"]
+    const randomNum = Math.floor(Math.random() * 9999)
+    const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)]
+    const randomNoun = nouns[Math.floor(Math.random() * nouns.length)]
+    return `${randomAdj}${randomNoun}${randomNum}`
+  }
+
+  const generateRandomPassword = () => {
+    const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    const lowercase = "abcdefghijklmnopqrstuvwxyz"
+    const numbers = "0123456789"
+    const special = "!@#$%^&*"
+    const allChars = uppercase + lowercase + numbers + special
+
+    let password = ""
+    // Ensure at least one of each type
+    password += uppercase[Math.floor(Math.random() * uppercase.length)]
+    password += lowercase[Math.floor(Math.random() * lowercase.length)]
+    password += numbers[Math.floor(Math.random() * numbers.length)]
+    password += special[Math.floor(Math.random() * special.length)]
+
+    // Fill the rest randomly (total length 12-16)
+    const length = 12 + Math.floor(Math.random() * 5)
+    for (let i = password.length; i < length; i++) {
+      password += allChars[Math.floor(Math.random() * allChars.length)]
+    }
+
+    // Shuffle the password
+    return password
+      .split("")
+      .sort(() => Math.random() - 0.5)
+      .join("")
+  }
+
+  const loadWorkingProxies = async () => {
+    setLoadingProxies(true)
+    try {
+      const response = await fetch("/api/proxies?working=true")
+      const data = await response.json()
+      setWorkingProxies(data.proxies || [])
+    } catch (error) {
+      console.error("[v0] Error loading proxies:", error)
+    } finally {
+      setLoadingProxies(false)
+    }
+  }
+
+  const loadRecoveryEmails = async () => {
+    setLoadingRecoveryEmails(true)
+    try {
+      const response = await fetch("/api/profiles/recovery-emails")
+      const data = await response.json()
+      const uniqueEmails = Array.from(
+        new Map((data.emails || []).map((email: any) => [email.email, email])).values(),
+      ) as { id: string; email: string }[]
+      setRecoveryEmails(uniqueEmails)
+    } catch (error) {
+      console.error("[v0] Error loading recovery emails:", error)
+    } finally {
+      setLoadingRecoveryEmails(false)
+    }
+  }
+
   const generateFolderName = () => {
     const date = new Date().toISOString().split("T")[0]
     const username = "user" // You can get this from auth context
@@ -141,6 +235,15 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
   const generateProfileName = (email: string) => {
     return email.split("@")[0]
   }
+
+  useEffect(() => {
+    if (singleForm.emailPrefix && singleForm.emailDomain) {
+      setSingleForm((prev) => ({
+        ...prev,
+        email: `${prev.emailPrefix}@${prev.emailDomain}`,
+      }))
+    }
+  }, [singleForm.emailPrefix, singleForm.emailDomain])
 
   const handleSingleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -167,11 +270,26 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         folderName,
         profileName,
         ...(singleForm.assignToUser && { assignToUserEmail: singleForm.assignToUser }),
+        fingerprintSettings: singleForm.fingerprintSettings, // Include fingerprint settings
       }
 
       if (profileType === "local") {
-        const proxyServer =
-          singleForm.proxyIp && singleForm.proxyPort ? `http://${singleForm.proxyIp}:${singleForm.proxyPort}` : ""
+        let proxyServer = ""
+        let proxyUsername = ""
+        let proxyPassword = ""
+
+        if (singleForm.proxyId) {
+          const selectedProxy = workingProxies.find((p) => p.id === singleForm.proxyId)
+          if (selectedProxy) {
+            proxyServer = `http://${selectedProxy.proxy_server}:${selectedProxy.proxy_port}`
+            proxyUsername = selectedProxy.proxy_username
+            proxyPassword = selectedProxy.proxy_password
+          }
+        } else if (singleForm.proxyIp && singleForm.proxyPort) {
+          proxyServer = `http://${singleForm.proxyIp}:${singleForm.proxyPort}`
+          proxyUsername = singleForm.proxyUsername
+          proxyPassword = singleForm.proxyPassword
+        }
 
         body.localConfig = {
           user_agent: singleForm.userAgent || undefined,
@@ -182,8 +300,8 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
           ...(proxyServer && {
             proxy: {
               server: proxyServer,
-              username: singleForm.proxyUsername || undefined,
-              password: singleForm.proxyPassword || undefined,
+              username: proxyUsername || undefined,
+              password: proxyPassword || undefined,
             },
           }),
         }
@@ -202,9 +320,12 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
 
       setOpen(false)
       setSingleForm({
+        emailPrefix: "",
+        emailDomain: "gmail.com",
         email: "",
         password: "",
         recovery: "",
+        proxyId: "",
         folderOption: "existing",
         existingFolder: "",
         newFolderName: "",
@@ -219,6 +340,7 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         proxyPassword: "",
         viewportWidth: "1366",
         viewportHeight: "768",
+        fingerprintSettings: {}, // Reset fingerprint settings
       })
       onSuccess?.()
     } catch (error) {
@@ -260,6 +382,7 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         profiles,
         folderName,
         profileType: bulkForm.profileType,
+        fingerprintSettings: bulkForm.fingerprintSettings, // Include fingerprint settings
       }
 
       if (bulkForm.profileType === "local") {
@@ -310,6 +433,7 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
         proxyPort: "",
         proxyUsername: "",
         proxyPassword: "",
+        fingerprintSettings: {}, // Reset fingerprint settings
       })
 
       onSuccess?.()
@@ -402,38 +526,110 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                 </div>
               )}
 
-              <div className="space-y-2">
-                <Label htmlFor="email">Gmail Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={singleForm.email}
-                  onChange={(e) => setSingleForm({ ...singleForm, email: e.target.value })}
-                  required
-                  placeholder="example@gmail.com"
-                />
+              <div className="space-y-4 p-4 border rounded-lg bg-muted/50">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium text-sm">Email Generator</h4>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const randomPrefix = generateRandomEmailPrefix()
+                      setSingleForm({ ...singleForm, emailPrefix: randomPrefix })
+                    }}
+                  >
+                    <RefreshCw className="mr-2 h-3 w-3" />
+                    Generate Random
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="col-span-2 space-y-2">
+                    <Label htmlFor="emailPrefix">Email Prefix *</Label>
+                    <Input
+                      id="emailPrefix"
+                      value={singleForm.emailPrefix}
+                      onChange={(e) => setSingleForm({ ...singleForm, emailPrefix: e.target.value })}
+                      required
+                      placeholder="username"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="emailDomain">Domain *</Label>
+                    <Select
+                      value={singleForm.emailDomain}
+                      onValueChange={(value) => setSingleForm({ ...singleForm, emailDomain: value })}
+                    >
+                      <SelectTrigger id="emailDomain">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gmail.com">Gmail</SelectItem>
+                        <SelectItem value="yahoo.com">Yahoo</SelectItem>
+                        <SelectItem value="outlook.com">Outlook</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="generatedEmail">Generated Email</Label>
+                  <Input
+                    id="generatedEmail"
+                    value={singleForm.email}
+                    readOnly
+                    className="bg-muted"
+                    placeholder="Generated email will appear here"
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="password">Gmail Password *</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={singleForm.password}
-                  onChange={(e) => setSingleForm({ ...singleForm, password: e.target.value })}
-                  required
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="password"
+                    type="password"
+                    value={singleForm.password}
+                    onChange={(e) => setSingleForm({ ...singleForm, password: e.target.value })}
+                    required
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      const randomPassword = generateRandomPassword()
+                      setSingleForm({ ...singleForm, password: randomPassword })
+                    }}
+                    title="Generate random password"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="recovery">Recovery Email</Label>
-                <Input
-                  id="recovery"
-                  type="email"
+                <Select
                   value={singleForm.recovery}
-                  onChange={(e) => setSingleForm({ ...singleForm, recovery: e.target.value })}
-                  placeholder="recovery@email.com"
-                />
+                  onValueChange={(value) => setSingleForm({ ...singleForm, recovery: value === "none" ? "" : value })}
+                >
+                  <SelectTrigger id="recovery">
+                    <SelectValue
+                      placeholder={loadingRecoveryEmails ? "Loading..." : "Select recovery email (optional)"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {recoveryEmails.map((email) => (
+                      <SelectItem key={email.id} value={email.email}>
+                        {email.email}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">Select from existing accounts or leave empty</p>
               </div>
 
               {profileType === "local" && (
@@ -441,82 +637,114 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                   <h4 className="font-medium text-sm">Local Browser Configuration (Chrome Only)</h4>
 
                   <div className="space-y-2">
-                    <Label htmlFor="userAgent">User Agent (Optional)</Label>
-                    <Input
-                      id="userAgent"
-                      value={singleForm.userAgent}
-                      onChange={(e) => setSingleForm({ ...singleForm, userAgent: e.target.value })}
-                      placeholder="Leave empty for default"
-                    />
+                    <Label htmlFor="proxySelect">Select Proxy (Optional)</Label>
+                    <Select
+                      value={singleForm.proxyId}
+                      onValueChange={(value) => setSingleForm({ ...singleForm, proxyId: value })}
+                    >
+                      <SelectTrigger id="proxySelect">
+                        <SelectValue placeholder={loadingProxies ? "Loading..." : "Select a working proxy"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None (Manual Entry)</SelectItem>
+                        {workingProxies.map((proxy) => (
+                          <SelectItem key={proxy.id} value={proxy.id}>
+                            {proxy.name || `${proxy.proxy_server}:${proxy.proxy_port}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      Only showing working proxies. Select "None" to enter manually.
+                    </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="viewportWidth">Viewport Width</Label>
-                      <Input
-                        id="viewportWidth"
-                        type="number"
-                        value={singleForm.viewportWidth}
-                        onChange={(e) => setSingleForm({ ...singleForm, viewportWidth: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="viewportHeight">Viewport Height</Label>
-                      <Input
-                        id="viewportHeight"
-                        type="number"
-                        value={singleForm.viewportHeight}
-                        onChange={(e) => setSingleForm({ ...singleForm, viewportHeight: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="proxyIp">Proxy IP (Optional)</Label>
-                      <Input
-                        id="proxyIp"
-                        value={singleForm.proxyIp}
-                        onChange={(e) => setSingleForm({ ...singleForm, proxyIp: e.target.value })}
-                        placeholder="102.129.208.102"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="proxyPort">Proxy Port</Label>
-                      <Input
-                        id="proxyPort"
-                        value={singleForm.proxyPort}
-                        onChange={(e) => setSingleForm({ ...singleForm, proxyPort: e.target.value })}
-                        placeholder="12323"
-                      />
-                    </div>
-                  </div>
-
-                  {singleForm.proxyIp && (
-                    <div className="grid grid-cols-2 gap-4">
+                  {!singleForm.proxyId && (
+                    <>
                       <div className="space-y-2">
-                        <Label htmlFor="proxyUsername">Proxy Username</Label>
+                        <Label htmlFor="userAgent">User Agent (Optional)</Label>
                         <Input
-                          id="proxyUsername"
-                          value={singleForm.proxyUsername}
-                          onChange={(e) => setSingleForm({ ...singleForm, proxyUsername: e.target.value })}
-                          placeholder="14a03104f588b"
+                          id="userAgent"
+                          value={singleForm.userAgent}
+                          onChange={(e) => setSingleForm({ ...singleForm, userAgent: e.target.value })}
+                          placeholder="Leave empty for default"
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="proxyPassword">Proxy Password</Label>
-                        <Input
-                          id="proxyPassword"
-                          type="password"
-                          value={singleForm.proxyPassword}
-                          onChange={(e) => setSingleForm({ ...singleForm, proxyPassword: e.target.value })}
-                          placeholder="c311b7035d"
-                        />
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="viewportWidth">Viewport Width</Label>
+                          <Input
+                            id="viewportWidth"
+                            type="number"
+                            value={singleForm.viewportWidth}
+                            onChange={(e) => setSingleForm({ ...singleForm, viewportWidth: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="viewportHeight">Viewport Height</Label>
+                          <Input
+                            id="viewportHeight"
+                            type="number"
+                            value={singleForm.viewportHeight}
+                            onChange={(e) => setSingleForm({ ...singleForm, viewportHeight: e.target.value })}
+                          />
+                        </div>
                       </div>
-                    </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="proxyIp">Proxy IP (Optional)</Label>
+                          <Input
+                            id="proxyIp"
+                            value={singleForm.proxyIp}
+                            onChange={(e) => setSingleForm({ ...singleForm, proxyIp: e.target.value })}
+                            placeholder="102.129.208.102"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="proxyPort">Proxy Port</Label>
+                          <Input
+                            id="proxyPort"
+                            value={singleForm.proxyPort}
+                            onChange={(e) => setSingleForm({ ...singleForm, proxyPort: e.target.value })}
+                            placeholder="12323"
+                          />
+                        </div>
+                      </div>
+
+                      {singleForm.proxyIp && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="proxyUsername">Proxy Username</Label>
+                            <Input
+                              id="proxyUsername"
+                              value={singleForm.proxyUsername}
+                              onChange={(e) => setSingleForm({ ...singleForm, proxyUsername: e.target.value })}
+                              placeholder="14a03104f588b"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="proxyPassword">Proxy Password</Label>
+                            <Input
+                              id="proxyPassword"
+                              type="password"
+                              value={singleForm.proxyPassword}
+                              onChange={(e) => setSingleForm({ ...singleForm, proxyPassword: e.target.value })}
+                              placeholder="c311b7035d"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}
+
+              <AdvancedFingerprintSettings
+                settings={singleForm.fingerprintSettings}
+                onChange={(settings) => setSingleForm({ ...singleForm, fingerprintSettings: settings })}
+              />
 
               <div className="space-y-2">
                 <Label>Folder</Label>
@@ -760,6 +988,11 @@ export function AddProfileDialog({ onSuccess }: AddProfileDialogProps) {
                   )}
                 </div>
               )}
+
+              <AdvancedFingerprintSettings
+                settings={bulkForm.fingerprintSettings}
+                onChange={(settings) => setBulkForm({ ...bulkForm, fingerprintSettings: settings })}
+              />
 
               <div className="space-y-2">
                 <Label>Folder</Label>

@@ -42,11 +42,20 @@ export async function POST(request: NextRequest) {
     const profileType = profile.profile_type || "gologin"
     const profileIdToUse = profile.profile_id || profile.id
 
+    const localConfigWithBrowser = {
+      ...profile.local_config,
+      browser_type: profile.browser_type || "chrome",
+      fingerprint: profile.fingerprint_config,
+    }
+
+    console.log("[v0] Profile fingerprint_config from DB:", JSON.stringify(profile.fingerprint_config, null, 2))
+    console.log("[v0] Config being passed to launcher:", JSON.stringify(localConfigWithBrowser, null, 2))
+
     const launchResult = await launcher.launchProfileByType(
       profileIdToUse,
       profileType,
       profile.profile_name,
-      profile.local_config || undefined,
+      localConfigWithBrowser,
     )
 
     const browser = launchResult.browser

@@ -72,7 +72,8 @@
     "url": "0.11.4",
     "os": "0.1.2",
     "crypto": "1.0.1",
-    "puppeteer": "24.26.1"
+    "puppeteer": "24.26.1",
+    "child_process": "1.0.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",

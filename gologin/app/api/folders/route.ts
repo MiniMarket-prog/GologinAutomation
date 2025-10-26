@@ -13,11 +13,7 @@ export async function GET() {
       const gologinFolders = await gologinAPI.getFolders()
       const gologinFolderNames = gologinFolders.map((f: any) => f.name).filter(Boolean)
 
-      // Get profile counts by folder and type from database
-      const { data: profiles, error } = await supabase
-        .from("gologin_profiles")
-        .select("folder_name, profile_type")
-        .not("folder_name", "is", null)
+      const { data: profiles, error } = await supabase.from("gologin_profiles").select("folder_name, profile_type")
 
       if (error) throw error
 
@@ -31,9 +27,8 @@ export async function GET() {
         }
       })
 
-      // Count profiles by type
       profiles?.forEach((profile) => {
-        const folderName = profile.folder_name
+        const folderName = profile.folder_name || "(No Folder)"
         if (!folderMap.has(folderName)) {
           folderMap.set(folderName, { gologin: 0, local: 0 })
         }
@@ -58,10 +53,7 @@ export async function GET() {
       return NextResponse.json({ folders: foldersWithTypes })
     }
 
-    const { data: profiles, error } = await supabase
-      .from("gologin_profiles")
-      .select("folder_name, profile_type")
-      .not("folder_name", "is", null)
+    const { data: profiles, error } = await supabase.from("gologin_profiles").select("folder_name, profile_type")
 
     if (error) throw error
 
@@ -69,7 +61,7 @@ export async function GET() {
     const folderMap = new Map<string, { gologin: number; local: number }>()
 
     profiles?.forEach((profile) => {
-      const folderName = profile.folder_name
+      const folderName = profile.folder_name || "(No Folder)"
       if (!folderMap.has(folderName)) {
         folderMap.set(folderName, { gologin: 0, local: 0 })
       }

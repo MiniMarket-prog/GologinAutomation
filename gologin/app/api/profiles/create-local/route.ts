@@ -22,7 +22,8 @@ export async function POST(request: Request) {
     })
 
     const body = await request.json()
-    const { email, password, recovery, folderName, profileName, assignToUserEmail, localConfig } = body
+    const { email, password, recovery, folderName, profileName, assignToUserEmail, localConfig, fingerprintSettings } =
+      body
 
     if (!email || !password || !folderName || !profileName) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
@@ -70,7 +71,9 @@ export async function POST(request: Request) {
         recovery_email: recovery,
         folder_name: folderName,
         assigned_user_id: dbUserId,
-        local_config: localConfig,
+        browser_type: localConfig?.browser_type || "chrome",
+        local_config: { ...localConfig, buster_extension_path: localConfig?.buster_extension_path || "" },
+        fingerprint_config: fingerprintSettings || localConfig?.fingerprint || null,
         status: "idle",
       })
       .select()
@@ -82,6 +85,7 @@ export async function POST(request: Request) {
     }
 
     console.log("[v0] Local profile created:", profile.id)
+    console.log("[v0] Fingerprint config stored:", JSON.stringify(profile.fingerprint_config, null, 2))
 
     const { data: task, error: taskError } = await adminClient
       .from("automation_tasks")

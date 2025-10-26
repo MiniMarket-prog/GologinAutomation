@@ -14,6 +14,7 @@ export interface GoLoginProfile {
   folder_name?: string | null
   gmail_email: string | null
   gmail_password: string | null
+  recovery_email?: string | null // Added recovery_email field for profile recovery email
   gmail_status?: "ok" | "blocked" | "password_required" | "verification_required" | "error" | "unknown" | null
   gmail_status_checked_at?: string | null
   gmail_status_message?: string | null
@@ -38,6 +39,47 @@ export interface LocalProfileConfig {
     height: number
   }
   user_agent?: string
+  fingerprint?: {
+    os?: "win" | "mac" | "lin"
+    platform?: string
+    timezone?: string
+    language?: string
+    languages?: string[]
+    hardware_concurrency?: number // CPU cores
+    device_memory?: number // RAM in GB
+    screen?: {
+      width: number
+      height: number
+      availWidth: number
+      availHeight: number
+      colorDepth: number
+      pixelDepth: number
+    }
+    fonts?: string[]
+    webgl?: {
+      vendor?: string
+      renderer?: string
+      noise?: boolean
+    }
+    canvas?: {
+      mode?: "off" | "noise" | "block"
+      noise?: boolean
+    }
+    audio?: {
+      noise?: boolean
+    }
+    webrtc?: {
+      mode?: "disabled" | "altered" | "real"
+      public_ip?: string
+      local_ips?: string[]
+    }
+    media_devices?: {
+      enable_masking?: boolean
+      video_inputs?: number
+      audio_inputs?: number
+      audio_outputs?: number
+    }
+  }
 }
 
 export interface AutomationTask {

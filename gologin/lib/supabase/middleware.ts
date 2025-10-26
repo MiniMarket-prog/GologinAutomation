@@ -26,21 +26,38 @@ export async function updateSession(request: NextRequest) {
   )
 
   const {
+    data: { session },
+  } = await supabase.auth.getSession()
+
+  // If session exists but might be expiring soon, try to refresh it
+  if (session) {
+    const expiresAt = session.expires_at
+    const now = Math.floor(Date.now() / 1000)
+    const timeUntilExpiry = expiresAt ? expiresAt - now : 0
+
+    // Refresh if session expires in less than 5 minutes
+    if (timeUntilExpiry < 300) {
+      await supabase.auth.refreshSession()
+    }
+  }
+
+  const {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // Protect dashboard routes
-  if (!user && request.nextUrl.pathname.startsWith("/dashboard")) {
-    const url = request.nextUrl.clone()
-    url.pathname = "/login"
-    return NextResponse.redirect(url)
+  // This prevents logout during long-running operations
+  const isApiRoute = request.nextUrl.pathname.startsWith("/api/")
+
+  // Protect dashboard routes (but not API routes)
+  if (!user && request.nextUrl.pathname.startsWith("/dashboard") && !isApiRoute) {
+    const loginUrl = new URL("/login", request.url)
+    return NextResponse.redirect(loginUrl)
   }
 
   // Redirect to dashboard if already logged in
   if (user && request.nextUrl.pathname === "/login") {
-    const url = request.nextUrl.clone()
-    url.pathname = "/dashboard"
-    return NextResponse.redirect(url)
+    const dashboardUrl = new URL("/dashboard", request.url)
+    return NextResponse.redirect(dashboardUrl)
   }
 
   return supabaseResponse

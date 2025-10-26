@@ -63,12 +63,13 @@ export function ProfileTable() {
   const [statusFilter, setStatusFilter] = useState<string>()
   const [gmailStatusFilter, setGmailStatusFilter] = useState<string>()
   const [folderFilter, setFolderFilter] = useState<string>()
-  const [proxyFilter, setProxyFilter] = useState<string>() // Added proxy filter state
+  const [folderTypeFilter, setFolderTypeFilter] = useState<string>("local")
   const [folders, setFolders] = useState<FolderWithType[]>([])
   const [launchingProfiles, setLaunchingProfiles] = useState<Set<string>>(new Set())
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
-  const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set()) // Added state to track visible passwords
-  const [editingProfile, setEditingProfile] = useState<GoLoginProfile | null>(null) // Added state for edit dialog
+  const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set())
+  const [editingProfile, setEditingProfile] = useState<GoLoginProfile | null>(null)
+  const [proxyFilter, setProxyFilter] = useState<string>()
 
   const { profiles, total, totalPages, isLoading, mutate } = useProfiles(
     page,
@@ -172,6 +173,37 @@ export function ProfileTable() {
     }
   }
 
+  const handleLaunchManually = async (profileId: string) => {
+    setLaunchingProfiles((prev) => new Set(prev).add(profileId))
+
+    try {
+      const response = await fetch("/api/profiles/launch-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to launch profile manually")
+      }
+
+      const data = await response.json()
+      alert(
+        `Profile launched manually!\n\n✓ No automation control\n✓ No detection\n✓ Use it like a normal browser\n\nClose the browser window when you're done.`,
+      )
+    } catch (error) {
+      console.error("[v0] Error launching profile manually:", error)
+      alert(`Failed to launch profile manually: ${error instanceof Error ? error.message : "Unknown error"}`)
+    } finally {
+      setLaunchingProfiles((prev) => {
+        const next = new Set(prev)
+        next.delete(profileId)
+        return next
+      })
+    }
+  }
+
   const togglePasswordVisibility = (profileId: string) => {
     setVisiblePasswords((prev) => {
       const next = new Set(prev)
@@ -212,7 +244,30 @@ export function ProfileTable() {
     return null
   }
 
+  const filteredFolders = folders.filter((folder) => {
+    if (folderTypeFilter === "local") {
+      return folder.localCount > 0
+    } else if (folderTypeFilter === "gologin") {
+      return folder.gologinCount > 0
+    }
+    return true // "all" shows all folders
+  })
+
   const filteredProfiles = profiles?.filter((profile) => {
+    if (folderFilter) {
+      const profileFolder = profile.folder_name || "(No Folder)"
+      if (profileFolder !== folderFilter) {
+        return false
+      }
+    }
+
+    if (folderTypeFilter === "local" && profile.profile_type !== "local") {
+      return false
+    } else if (folderTypeFilter === "gologin" && profile.profile_type !== "gologin") {
+      return false
+    }
+
+    // Filter by proxy status
     if (proxyFilter === "with-proxy") {
       return hasProxy(profile)
     } else if (proxyFilter === "without-proxy") {
@@ -220,6 +275,9 @@ export function ProfileTable() {
     }
     return true
   })
+
+  const displayTotal =
+    proxyFilter || folderFilter || folderTypeFilter !== "all" ? filteredProfiles?.length || 0 : total || 0
 
   return (
     <div className="space-y-4">
@@ -235,12 +293,21 @@ export function ProfileTable() {
             />
           </div>
           <select
+            value={folderTypeFilter}
+            onChange={(e) => setFolderTypeFilter(e.target.value)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[160px]"
+          >
+            <option value="all">All Folder Types</option>
+            <option value="local">💻 Local Folders</option>
+            <option value="gologin">☁️ GoLogin Folders</option>
+          </select>
+          <select
             value={folderFilter || "all"}
             onChange={(e) => setFolderFilter(e.target.value === "all" ? undefined : e.target.value)}
             className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[180px]"
           >
             <option value="all">All Folders</option>
-            {folders.map((folder) => (
+            {filteredFolders.map((folder) => (
               <option key={folder.name || "no-folder"} value={folder.name}>
                 📁 {folder.name}
               </option>
@@ -296,7 +363,8 @@ export function ProfileTable() {
               <TableHead>Profile Name</TableHead>
               <TableHead>Folder</TableHead>
               <TableHead>Gmail Email</TableHead>
-              <TableHead>Gmail Password</TableHead> {/* Added password column header */}
+              <TableHead>Gmail Password</TableHead>
+              <TableHead>Recovery Email</TableHead>
               <TableHead>Gmail Status</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last Run</TableHead>
@@ -306,7 +374,7 @@ export function ProfileTable() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground">
+                <TableCell colSpan={10} className="text-center text-muted-foreground">
                   Loading profiles...
                 </TableCell>
               </TableRow>
@@ -400,6 +468,13 @@ export function ProfileTable() {
                       )}
                     </TableCell>
                     <TableCell>
+                      {profile.recovery_email ? (
+                        <span className="text-sm">{profile.recovery_email}</span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
                       {profile.gmail_status ? (
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
@@ -445,6 +520,16 @@ export function ProfileTable() {
                             <ExternalLink className="mr-2 h-4 w-4" />
                             {isLaunching ? "Launching..." : "Launch in Local Mode"}
                           </DropdownMenuItem>
+                          {profile.profile_type === "local" && (
+                            <DropdownMenuItem
+                              onClick={() => handleLaunchManually(profile.id)}
+                              disabled={isLaunching}
+                              className="text-green-600"
+                            >
+                              <Monitor className="mr-2 h-4 w-4" />
+                              {isLaunching ? "Launching..." : "Launch Manually (No Automation)"}
+                            </DropdownMenuItem>
+                          )}
                           {profile.status === "idle" && (
                             <DropdownMenuItem onClick={() => handleStatusChange(profile.id, "running")}>
                               <Play className="mr-2 h-4 w-4" />
@@ -469,7 +554,7 @@ export function ProfileTable() {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground">
+                <TableCell colSpan={10} className="text-center text-muted-foreground">
                   No profiles found
                 </TableCell>
               </TableRow>
@@ -481,7 +566,8 @@ export function ProfileTable() {
       {totalPages && totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            Showing {filteredProfiles?.length || 0} of {total || 0} profiles
+            Showing {filteredProfiles?.length || 0} of {displayTotal} profiles
+            {proxyFilter && <span className="ml-1 text-blue-500">(filtered by proxy)</span>}
           </p>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>

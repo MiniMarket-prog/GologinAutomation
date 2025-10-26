@@ -35,7 +35,16 @@ export async function GET(request: NextRequest) {
 
     const proxyMap = new Map<
       string,
-      { count: number; lastUsed: string | null; usernames: Set<string>; profileNames: string[]; ip: string | null }
+      {
+        count: number
+        lastUsed: string | null
+        usernames: Set<string>
+        profileNames: string[]
+        ip: string | null
+        proxy_username?: string
+        proxy_password?: string
+        proxy_port?: string
+      }
     >()
 
     profiles?.forEach((profile: any) => {
@@ -44,15 +53,37 @@ export async function GET(request: NextRequest) {
       const username = profile.users?.email || "Unknown"
       const profileName = profile.profile_name || "Unnamed"
 
-      // Extract IP from proxy server (format: http://ip:port or http://user:pass@ip:port)
       let proxyIp: string | null = null
+      let proxyUsername: string | undefined = undefined
+      let proxyPassword: string | undefined = undefined
+      let proxyPort: string | undefined = undefined
+
       if (proxyServer !== "No proxy") {
-        const match = proxyServer.match(/(?:http:\/\/)?(?:[^@]+@)?([^:]+)/)
-        proxyIp = match ? match[1] : null
+        // Format: http://username:password@ip:port or http://ip:port
+        const match = proxyServer.match(/^(?:https?:\/\/)?(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/)
+        if (match) {
+          proxyUsername = match[1] || undefined
+          proxyPassword = match[2] || undefined
+          proxyIp = match[3]
+          proxyPort = match[4]
+        } else {
+          // Fallback: try to extract just IP
+          const simpleMatch = proxyServer.match(/(?:http:\/\/)?(?:[^@]+@)?([^:]+)/)
+          proxyIp = simpleMatch ? simpleMatch[1] : null
+        }
       }
 
       if (!proxyMap.has(proxyServer)) {
-        proxyMap.set(proxyServer, { count: 0, lastUsed: null, usernames: new Set(), profileNames: [], ip: proxyIp })
+        proxyMap.set(proxyServer, {
+          count: 0,
+          lastUsed: null,
+          usernames: new Set(),
+          profileNames: [],
+          ip: proxyIp,
+          proxy_username: proxyUsername,
+          proxy_password: proxyPassword,
+          proxy_port: proxyPort,
+        })
       }
 
       const entry = proxyMap.get(proxyServer)!
@@ -93,6 +124,9 @@ export async function GET(request: NextRequest) {
           usernames: Array.from(data.usernames),
           profile_names: data.profileNames,
           location,
+          proxy_username: data.proxy_username,
+          proxy_password: data.proxy_password,
+          proxy_port: data.proxy_port,
         }
       }),
     )

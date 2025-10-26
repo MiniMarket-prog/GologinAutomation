@@ -13,8 +13,9 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Loader2 } from "lucide-react"
+import { Loader2, RefreshCw } from "lucide-react"
 import type { GoLoginProfile } from "@/lib/types"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface EditProfileDialogProps {
   profile: GoLoginProfile
@@ -25,10 +26,14 @@ interface EditProfileDialogProps {
 
 export function EditProfileDialog({ profile, open, onOpenChange, onSuccess }: EditProfileDialogProps) {
   const [loading, setLoading] = useState(false)
+  const [recoveryEmails, setRecoveryEmails] = useState<{ id: string; email: string }[]>([])
+  const [loadingRecoveryEmails, setLoadingRecoveryEmails] = useState(false)
+
   const [form, setForm] = useState({
     profile_name: "",
     gmail_email: "",
     gmail_password: "",
+    recovery_email: "", // Added recovery email field
     userAgent: "",
     proxyIp: "",
     proxyPort: "",
@@ -37,6 +42,48 @@ export function EditProfileDialog({ profile, open, onOpenChange, onSuccess }: Ed
     viewportWidth: "1366",
     viewportHeight: "768",
   })
+
+  const generateRandomPassword = () => {
+    const length = 12 + Math.floor(Math.random() * 5) // 12-16 characters
+    const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    const lowercase = "abcdefghijklmnopqrstuvwxyz"
+    const numbers = "0123456789"
+    const special = "!@#$%^&*"
+    const allChars = uppercase + lowercase + numbers + special
+
+    let password = ""
+    password += uppercase[Math.floor(Math.random() * uppercase.length)]
+    password += lowercase[Math.floor(Math.random() * lowercase.length)]
+    password += numbers[Math.floor(Math.random() * numbers.length)]
+    password += special[Math.floor(Math.random() * special.length)]
+
+    for (let i = password.length; i < length; i++) {
+      password += allChars[Math.floor(Math.random() * allChars.length)]
+    }
+
+    password = password
+      .split("")
+      .sort(() => Math.random() - 0.5)
+      .join("")
+
+    setForm({ ...form, gmail_password: password })
+  }
+
+  const loadRecoveryEmails = async () => {
+    setLoadingRecoveryEmails(true)
+    try {
+      const response = await fetch("/api/profiles/recovery-emails")
+      const data = await response.json()
+      const uniqueEmails = Array.from(
+        new Map((data.emails || []).map((email: { id: string; email: string }) => [email.email, email])).values(),
+      ) as { id: string; email: string }[]
+      setRecoveryEmails(uniqueEmails)
+    } catch (error) {
+      console.error("[v0] Error loading recovery emails:", error)
+    } finally {
+      setLoadingRecoveryEmails(false)
+    }
+  }
 
   useEffect(() => {
     if (open && profile) {
@@ -56,6 +103,7 @@ export function EditProfileDialog({ profile, open, onOpenChange, onSuccess }: Ed
         profile_name: profile.profile_name || "",
         gmail_email: profile.gmail_email || "",
         gmail_password: profile.gmail_password || "",
+        recovery_email: profile.recovery_email || "", // Load recovery email
         userAgent: localConfig?.user_agent || "",
         proxyIp,
         proxyPort,
@@ -64,6 +112,8 @@ export function EditProfileDialog({ profile, open, onOpenChange, onSuccess }: Ed
         viewportWidth: localConfig?.viewport?.width?.toString() || "1366",
         viewportHeight: localConfig?.viewport?.height?.toString() || "768",
       })
+
+      loadRecoveryEmails()
     }
   }, [open, profile])
 
@@ -76,6 +126,7 @@ export function EditProfileDialog({ profile, open, onOpenChange, onSuccess }: Ed
         profile_name: form.profile_name,
         gmail_email: form.gmail_email,
         gmail_password: form.gmail_password,
+        recovery_email: form.recovery_email || null, // Include recovery email in update
       }
 
       if (profile.profile_type === "local") {
@@ -150,13 +201,45 @@ export function EditProfileDialog({ profile, open, onOpenChange, onSuccess }: Ed
 
           <div className="space-y-2">
             <Label htmlFor="gmail_password">Gmail Password *</Label>
-            <Input
-              id="gmail_password"
-              type="password"
-              value={form.gmail_password}
-              onChange={(e) => setForm({ ...form, gmail_password: e.target.value })}
-              required
-            />
+            <div className="flex gap-2">
+              <Input
+                id="gmail_password"
+                type="text" // Changed type from "password" to "text" to show password in plain text
+                value={form.gmail_password}
+                onChange={(e) => setForm({ ...form, gmail_password: e.target.value })}
+                required
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={generateRandomPassword}
+                title="Generate random password"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="recovery_email">Recovery Email (Optional)</Label>
+            <Select
+              value={form.recovery_email || "none"}
+              onValueChange={(value) => setForm({ ...form, recovery_email: value === "none" ? "" : value })}
+              disabled={loadingRecoveryEmails}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={loadingRecoveryEmails ? "Loading..." : "Select recovery email"} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {recoveryEmails.map((email) => (
+                  <SelectItem key={email.id} value={email.email}>
+                    {email.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {profile.profile_type === "local" && (

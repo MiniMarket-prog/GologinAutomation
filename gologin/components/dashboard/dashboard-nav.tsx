@@ -4,7 +4,18 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
-import { LayoutDashboard, Users, ListTodo, Activity, LogOut, Settings, User, Shield, Globe } from "lucide-react"
+import {
+  LayoutDashboard,
+  Users,
+  ListTodo,
+  Activity,
+  LogOut,
+  Settings,
+  User,
+  Shield,
+  Globe,
+  UserPlus,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useEffect, useState } from "react"
 
@@ -14,6 +25,7 @@ const navItems = [
   { href: "/dashboard/tasks", label: "Tasks", icon: ListTodo },
   { href: "/dashboard/activity", label: "Activity", icon: Activity },
   { href: "/dashboard/proxies", label: "Proxies", icon: Globe },
+  { href: "/dashboard/account-creator", label: "Account Creator", icon: UserPlus },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ]
 

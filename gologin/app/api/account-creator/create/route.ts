@@ -14,8 +14,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { count, proxy_server, proxy_username, proxy_password, use_existing_profile, existing_profile_id } =
-      await request.json()
+    const {
+      count,
+      proxy_server,
+      proxy_username,
+      proxy_password,
+      use_existing_profile,
+      existing_profile_id,
+      browserType,
+      gologinMode,
+      country,
+      fingerprintSettings,
+    } = await request.json()
 
     if (!count || count < 1 || count > 50) {
       return NextResponse.json({ error: "Count must be between 1 and 50" }, { status: 400 })
@@ -41,6 +51,10 @@ export async function POST(request: NextRequest) {
         proxy_password: proxy_password || null,
         use_existing_profile: use_existing_profile || false,
         existing_profile_id: existing_profile_id || null,
+        browser_type: browserType || "local",
+        gologin_mode: gologinMode || "local",
+        country: country || "italy",
+        fingerprint_settings: fingerprintSettings || null,
       })
     }
 

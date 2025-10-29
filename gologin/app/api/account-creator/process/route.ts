@@ -75,7 +75,12 @@ export async function POST() {
           })
         }
 
-        const creator = new AccountCreator(proxyConfig, existingProfileData)
+        const creator = new AccountCreator(
+          proxyConfig,
+          existingProfileData,
+          undefined,
+          task.browser_type as "local" | "gologin",
+        )
         const result = await creator.createAccount()
 
         // Update task with results

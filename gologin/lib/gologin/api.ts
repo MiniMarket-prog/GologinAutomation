@@ -129,6 +129,13 @@ export class GoLoginAPI {
     const data = await response.json()
     console.log(`[v0] Start profile response:`, JSON.stringify(data, null, 2))
 
+    if (data.remoteOrbitaUrl) {
+      // Convert https:// to wss:// for WebSocket connection
+      const wsUrl = data.remoteOrbitaUrl.replace("https://", "wss://")
+      console.log(`[v0] Converted to WebSocket URL: ${wsUrl}`)
+      return { ...data, wsUrl }
+    }
+
     return data
   }
 

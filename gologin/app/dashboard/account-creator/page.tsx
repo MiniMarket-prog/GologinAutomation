@@ -68,6 +68,8 @@ export default function AccountCreatorPage() {
   const [selectedProfile, setSelectedProfile] = useState<string>("")
   const [profilesWithGmail, setProfilesWithGmail] = useState<ProfileWithGmail[]>([])
   const [selectedCountry, setSelectedCountry] = useState<string>("italy")
+  const [browserType, setBrowserType] = useState<"local" | "gologin">("local")
+  const [gologinMode, setGologinMode] = useState<"local" | "cloud">("local")
   const [isCreating, setIsCreating] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [tasks, setTasks] = useState<AccountTask[]>([])
@@ -223,6 +225,8 @@ export default function AccountCreatorPage() {
         count,
         ...proxyData,
         country: selectedCountry,
+        browserType,
+        ...(browserType === "gologin" && { gologinMode }),
         ...(useCustomFingerprint && { fingerprintSettings }),
         ...(useExistingProfile && {
           use_existing_profile: true,
@@ -522,6 +526,44 @@ export default function AccountCreatorPage() {
                   first to ensure numbers are available for your chosen country.
                 </p>
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="browserType">Browser Type</Label>
+                <select
+                  id="browserType"
+                  value={browserType}
+                  onChange={(e) => setBrowserType(e.target.value as "local" | "gologin")}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="local">Local Browser (Puppeteer)</option>
+                  <option value="gologin">GoLogin Browser</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {browserType === "local"
+                    ? "Uses local Puppeteer browser with custom fingerprints. Good for testing and development."
+                    : "Uses GoLogin browser with professional anti-detect features. Better for production use."}
+                </p>
+              </div>
+
+              {browserType === "gologin" && (
+                <div className="space-y-2">
+                  <Label htmlFor="gologinMode">GoLogin Mode</Label>
+                  <select
+                    id="gologinMode"
+                    value={gologinMode}
+                    onChange={(e) => setGologinMode(e.target.value as "local" | "cloud")}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="local">Local (GoLogin Desktop App)</option>
+                    <option value="cloud">Cloud (GoLogin Cloud Browser)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    {gologinMode === "local"
+                      ? "Uses your local GoLogin desktop application. Requires GoLogin app to be installed and running on your PC. Better anti-detection."
+                      : "Uses GoLogin's cloud browser service. No local installation required, but may have higher detection risk."}
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-3 p-4 border rounded-lg bg-muted/50">
                 <div className="flex items-center space-x-2">

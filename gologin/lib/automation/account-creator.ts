@@ -1,7 +1,6 @@
 import puppeteer, { type Browser, type Page } from "puppeteer-core"
 import { FiveSimAPI, extractVerificationCode } from "@/lib/services/fivesim-api"
 import { randomDelay, humanType } from "./utils"
-import { gologinAPI } from "@/lib/gologin/api"
 import { LocalBrowserLauncher } from "./local-browser-launcher"
 
 interface AccountData {
@@ -139,11 +138,21 @@ export class AccountCreator {
   private proxyConfig: ProxyConfig | null = null
   private existingProfile: any | null = null
   private country = "italy"
+  private browserType: "local" | "gologin" = "local"
+  private gologinMode: "local" | "cloud" = "local"
 
-  constructor(proxyConfig?: ProxyConfig, existingProfile?: any, country?: string) {
+  constructor(
+    proxyConfig?: ProxyConfig,
+    existingProfile?: any,
+    country?: string,
+    browserType?: "local" | "gologin",
+    gologinMode?: "local" | "cloud",
+  ) {
     this.proxyConfig = proxyConfig || null
     this.existingProfile = existingProfile || null
     this.country = country || "italy"
+    this.browserType = browserType || "local"
+    this.gologinMode = gologinMode || "local"
   }
 
   async createAccount(): Promise<{
@@ -155,6 +164,7 @@ export class AccountCreator {
   }> {
     try {
       console.log("[v0] Starting Gmail account creation...")
+      console.log(`[v0] Browser type: ${this.browserType}`)
 
       if (this.existingProfile) {
         console.log(`[v0] Using existing profile: ${this.existingProfile.profile_name}`)
@@ -616,36 +626,147 @@ export class AccountCreator {
         await randomDelay(3000, 5000)
 
         console.log("[v0] Waiting for SMS verification code...")
+        console.log(`[v0] Order ID: ${phoneOrder.id}`)
+        console.log(`[v0] Phone number: ${phoneOrder.phone}`)
+
         let verificationCode: string | null = null
         let attempts = 0
         const maxAttempts = 30
+        const startTime = Date.now()
 
         while (!verificationCode && attempts < maxAttempts) {
+          const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+          console.log(`[v0] SMS check attempt ${attempts + 1}/${maxAttempts} (${elapsedSeconds}s elapsed)`)
+
           await randomDelay(10000, 15000)
 
           try {
+            console.log(`[v0] Calling 5sim API to check SMS for order ${phoneOrder.id}...`)
             const smsData = await fivesim.checkSMS(phoneOrder.id.toString())
+            console.log(`[v0] 5sim API response:`, JSON.stringify(smsData, null, 2))
+
             if (smsData.sms && smsData.sms.length > 0) {
+              console.log(`[v0] Found ${smsData.sms.length} SMS message(s)`)
               const latestSMS = smsData.sms[smsData.sms.length - 1]
+              console.log(`[v0] Latest SMS text: "${latestSMS.text}"`)
+
               verificationCode = extractVerificationCode(latestSMS.text)
               if (verificationCode) {
-                console.log(`[v0] Received verification code: ${verificationCode}`)
+                console.log(`[v0] ✓ Successfully extracted verification code: ${verificationCode}`)
+              } else {
+                console.log(`[v0] ⚠️ Could not extract verification code from SMS text`)
               }
+            } else {
+              console.log(`[v0] No SMS messages received yet`)
             }
-          } catch (error) {
-            console.log("[v0] Checking for SMS...")
+          } catch (error: any) {
+            console.error(`[v0] Error checking SMS:`, error)
+            console.error(`[v0] Error message: ${error.message}`)
+            console.error(`[v0] Error stack:`, error.stack)
+
+            // If it's an authentication or API error, throw immediately
+            if (
+              error.message.includes("UNAUTHORIZED") ||
+              error.message.includes("INVALID_API_KEY") ||
+              error.message.includes("BAD_KEY") ||
+              error.message.includes("WRONG_KEY")
+            ) {
+              console.error(`[v0] ❌ 5sim API authentication error - check your FIVESIM_API_KEY`)
+              throw new Error(
+                `5sim API authentication failed: ${error.message}. Please check your FIVESIM_API_KEY environment variable.`,
+              )
+            }
+
+            // If it's a network error, log it but continue
+            if (error.message.includes("fetch failed") || error.message.includes("ECONNREFUSED")) {
+              console.error(`[v0] ⚠️ Network error connecting to 5sim API, will retry...`)
+            }
+
+            // For other errors, just log and continue (might be "no SMS yet")
+            console.log(`[v0] Continuing to wait for SMS...`)
           }
 
           attempts++
         }
 
         if (!verificationCode) {
+          const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+          console.error(
+            `[v0] ❌ Failed to receive SMS verification code after ${elapsedSeconds} seconds and ${attempts} attempts`,
+          )
+          console.log(`[v0] Canceling order ${phoneOrder.id}...`)
+
           await fivesim.cancelOrder(phoneOrder.id.toString())
-          throw new Error("Failed to receive SMS verification code")
+          throw new Error(
+            `Failed to receive SMS verification code after ${attempts} attempts (${elapsedSeconds}s). ` +
+              `This could mean: 1) The phone number didn't receive the SMS, 2) Google blocked the number, ` +
+              `3) There's an issue with the 5sim service. Try testing the country in the 5sim Test Page first.`,
+          )
         }
 
-        await this.page.waitForSelector('input[type="text"]', { timeout: 15000 })
-        await humanType(this.page, 'input[type="text"]', verificationCode)
+        console.log("[v0] Looking for verification code input field...")
+        await randomDelay(2000, 3000)
+
+        // Try multiple selectors for the verification code input
+        const codeInputSelectors = [
+          'input[type="text"]',
+          'input[type="tel"]',
+          'input[aria-label*="code"]',
+          'input[aria-label*="verification"]',
+          'input[placeholder*="code"]',
+          'input[name*="code"]',
+          'input[id*="code"]',
+          "#code",
+          '[data-form-input-id="code"]',
+        ]
+
+        let codeInputFound = false
+        let codeInputSelector = ""
+
+        for (const selector of codeInputSelectors) {
+          try {
+            await this.page.waitForSelector(selector, { timeout: 3000 })
+            codeInputFound = true
+            codeInputSelector = selector
+            console.log(`[v0] ✓ Found verification code input using selector: ${selector}`)
+            break
+          } catch (error) {
+            console.log(`[v0] Selector ${selector} not found, trying next...`)
+          }
+        }
+
+        if (!codeInputFound) {
+          console.error("[v0] ❌ Could not find verification code input field")
+
+          // Take screenshot for debugging
+          const screenshotPath = `verification-input-not-found-${Date.now()}.png`
+          await this.page.screenshot({ path: screenshotPath as `${string}.png`, fullPage: true })
+          console.log(`[v0] Screenshot saved to: ${screenshotPath}`)
+
+          // Log available inputs for debugging
+          const availableInputs = await this.page.evaluate(() => {
+            const inputs = Array.from(document.querySelectorAll("input"))
+            return inputs.map((input) => ({
+              type: input.type,
+              id: input.id,
+              name: input.name,
+              placeholder: input.placeholder,
+              ariaLabel: input.getAttribute("aria-label"),
+            }))
+          })
+          console.log("[v0] Available inputs on page:", JSON.stringify(availableInputs, null, 2))
+
+          // Cancel the order since we can't enter the code
+          await fivesim.cancelOrder(phoneOrder.id.toString())
+
+          throw new Error(
+            `Could not find verification code input field after receiving SMS code ${verificationCode}. ` +
+              `The page structure may have changed. Screenshot saved to ${screenshotPath} for debugging.`,
+          )
+        }
+
+        console.log(`[v0] Entering verification code: ${verificationCode}`)
+        await humanType(this.page, codeInputSelector, verificationCode)
         await randomDelay(1000, 2000)
 
         await this.clickButtonByText("Next")
@@ -689,8 +810,6 @@ export class AccountCreator {
       await this.cleanup()
     }
   }
-
-  // REMOVED DUPLICATE METHOD: private async createAccountFromExistingProfile() starting at line 656
 
   private async createAccountFromExistingProfile(): Promise<{
     email: string
@@ -1430,6 +1549,68 @@ export class AccountCreator {
           throw new Error("Phone verification failed after all retry attempts")
         }
 
+        //  Replace single selector with multi-selector strategy to find verification code input
+        console.log("[v0] Attempting to enter verification code...")
+
+        // Try multiple selectors for the verification code input
+        const codeInputSelectors = [
+          'input[type="text"]',
+          'input[type="tel"]',
+          'input[aria-label*="code" i]',
+          'input[aria-label*="verification" i]',
+          'input[placeholder*="code" i]',
+          'input[name*="code" i]',
+          'input[id*="code" i]',
+          'input[autocomplete="one-time-code"]',
+          'input[inputmode="numeric"]',
+        ]
+
+        let codeInputFound = false
+        for (const selector of codeInputSelectors) {
+          try {
+            console.log(`[v0] Trying selector: ${selector}`)
+            await this.page.waitForSelector(selector, { timeout: 3000 })
+            await humanType(this.page, selector, finalVerificationCode)
+            console.log(`[v0] ✓ Successfully entered verification code using selector: ${selector}`)
+            codeInputFound = true
+            break
+          } catch (error) {
+            console.log(`[v0] Selector ${selector} not found, trying next...`)
+          }
+        }
+
+        if (!codeInputFound) {
+          console.error("[v0] Could not find verification code input field with any selector")
+
+        
+
+          // Log all available inputs for debugging
+          const allInputs = await this.page.evaluate(() => {
+            return Array.from(document.querySelectorAll("input")).map((input) => ({
+              type: input.type,
+              name: input.name,
+              id: input.id,
+              placeholder: input.placeholder,
+              ariaLabel: input.getAttribute("aria-label"),
+              autocomplete: input.autocomplete,
+              inputmode: input.getAttribute("inputmode"),
+            }))
+          })
+          console.log("[v0] Available inputs on page:", JSON.stringify(allInputs, null, 2))
+
+          throw new Error(
+            "Could not find verification code input field. " +
+              "The SMS code was received successfully, but the input field to enter it could not be located. " +
+              `Screenshot saved to: `,
+          )
+        }
+
+        await randomDelay(1000, 2000)
+        // </CHANGE>
+
+        await this.clickButtonByText("Next")
+        await randomDelay(3000, 5000)
+
         // Enter the verification code
         await this.page.waitForSelector('input[type="text"]', { timeout: 15000 })
         await humanType(this.page, 'input[type="text"]', finalVerificationCode)
@@ -1437,8 +1618,6 @@ export class AccountCreator {
 
         await this.clickButtonByText("Next")
         await randomDelay(3000, 5000)
-
-        // await fivesim.finishOrder(phoneOrder.id.toString()) // Moved up into the while loop
 
         console.log("[v0] Skipping recovery options...")
         try {
@@ -1486,17 +1665,24 @@ export class AccountCreator {
     if (this.existingProfile.profile_type === "gologin") {
       const profileId = this.existingProfile.profile_id
       console.log(`[v0] Starting GoLogin profile: ${profileId}`)
+      console.log(`[v0] GoLogin mode: ${this.gologinMode}`)
 
-      const { wsUrl } = await gologinAPI.startProfile(profileId)
-      console.log(`[v0] Profile started, connecting to: ${wsUrl}`)
+      const { ProfileLauncher } = await import("./profile-launcher")
+      const apiKey = process.env.GOLOGIN_API_KEY
+      if (!apiKey) {
+        throw new Error("GOLOGIN_API_KEY environment variable not set")
+      }
 
-      this.browser = await puppeteer.connect({
-        browserWSEndpoint: wsUrl,
-        defaultViewport: null,
-      })
+      const launcher = new ProfileLauncher(apiKey, this.gologinMode)
+      const result = await launcher.launchProfile(profileId, this.existingProfile.profile_name)
 
-      const pages = await this.browser.pages()
-      this.page = pages[0] || (await this.browser.newPage())
+      if (!result.success || !result.browser || !result.page) {
+        throw new Error(result.error || "Failed to launch GoLogin profile")
+      }
+
+      this.browser = result.browser
+      this.page = result.page
+      console.log(`[v0] ✓ GoLogin profile launched successfully in ${this.gologinMode} mode`)
     } else if (this.existingProfile.profile_type === "local") {
       console.log(`[v0] Starting local profile: ${this.existingProfile.id}`)
 

@@ -32,7 +32,7 @@ interface StartProfileResult {
   seleniumUrl: string
   port: number
   profileId: string
-  lifetimeState: any
+  lifetimeState?: string
 }
 
 export class KameleoAPI {
@@ -181,25 +181,32 @@ export class KameleoAPI {
    * @param options - Optional start options including CDP port
    * @returns WebDriver connection info
    */
-  async startProfile(profileId: string, options?: { cdpPort?: number }): Promise<StartProfileResult> {
+  async startProfile(profileId: string, options?: { cdpPort?: number }): Promise<any> {
     try {
+      console.log(`[v0] Starting Kameleo profile...`)
       console.log(`[v0] Starting Kameleo profile: ${profileId}`)
 
-      const body: any = {}
-      if (options?.cdpPort) {
-        body.automation = {
-          enableCdp: true,
-          cdpPort: options.cdpPort,
-        }
-        console.log(`[v0] Starting with CDP enabled on port ${options.cdpPort}`)
+      const body = {
+        arguments: [
+          "--no-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-blink-features=AutomationControlled",
+          "--disable-infobars",
+          "--window-size=1920,1080",
+          "--disable-automation",
+        ],
       }
 
-      const result = await this.request<any>(`/profiles/${profileId}/start`, {
+      if (options?.cdpPort) {
+        console.log(`[v0] CDP port ${options.cdpPort} will be used for WebSocket connection after profile starts`)
+      }
+
+      const result = await this.request<any>(`/profiles/${profileId}/start?automationType=Selenium`, {
         method: "POST",
-        body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+        body: JSON.stringify(body),
       })
 
-      console.log(`[v0] ✓ Profile started successfully`)
+      console.log(`[v0] ✓ Profile started successfully with Selenium automation type`)
       console.log(`[v0] API response:`, JSON.stringify(result, null, 2))
 
       // Kameleo WebDriver is always at /webdriver endpoint
@@ -273,6 +280,35 @@ export class KameleoAPI {
 
       console.error("[v0] Failed to stop Kameleo profile:", error.message || error)
       throw error
+    }
+  }
+
+  /**
+   * Stop all running Kameleo profiles
+   * Useful to ensure clean state before launching a new profile
+   */
+  async stopAllProfiles(): Promise<void> {
+    try {
+      console.log(`[v0] Checking for running profiles...`)
+      const profiles = await this.getProfiles()
+
+      // Stop each profile (API will skip if not running)
+      for (const profile of profiles) {
+        try {
+          await this.stopProfile(profile.id)
+        } catch (error: any) {
+          // Ignore errors - profile might not be running
+          console.log(`[v0] Skipped profile ${profile.id} (not running)`)
+        }
+      }
+
+      console.log(`[v0] ✓ All profiles stopped`)
+
+      // Wait a bit for resources to be released
+      await this.sleep(2000)
+    } catch (error: any) {
+      console.error("[v0] Failed to stop all profiles:", error.message || error)
+      // Don't throw - this is a cleanup operation
     }
   }
 

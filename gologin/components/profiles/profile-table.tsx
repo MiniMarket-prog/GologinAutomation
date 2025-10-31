@@ -87,7 +87,7 @@ export function ProfileTable() {
         data: { user },
       } = await supabase.auth.getUser()
 
-      if (user) {
+      if (user && user.email) {
         // Query the users table to get the role (consistent with server-side check)
         const { data: userData } = await supabase.from("users").select("role").eq("email", user.email).single()
 

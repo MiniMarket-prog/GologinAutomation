@@ -55,12 +55,12 @@ export class KameleoAccountCreator {
       console.log("[v0] Starting account creation for task:", options.taskId)
 
       // Update task status to processing
-      await supabase
+      await (supabase as any)
         .from("kameleo_account_tasks")
         .update({
           status: "processing",
           started_at: new Date().toISOString(),
-        } as any)
+        })
         .eq("id", options.taskId)
 
       // Generate account data
@@ -73,13 +73,7 @@ export class KameleoAccountCreator {
 
       while (launchAttempts < maxLaunchAttempts) {
         try {
-          console.log(
-            "[v0] Launching Kameleo browser with WebDriver (attempt",
-            launchAttempts + 1,
-            "of",
-            maxLaunchAttempts,
-            ")",
-          )
+          console.log("[v0] Launching Kameleo browser (attempt", launchAttempts + 1, "of", maxLaunchAttempts, ")")
           this.webDriverController = new KameleoWebDriverController({
             profileId: currentProfileId,
             proxy: options.proxy,
@@ -115,11 +109,11 @@ export class KameleoAccountCreator {
               console.log("[v0] ✓ Created new profile:", currentProfileId)
 
               // Update task with new profile ID
-              await supabase
+              await (supabase as any)
                 .from("kameleo_account_tasks")
                 .update({
                   profile_id: currentProfileId,
-                } as any)
+                })
                 .eq("id", options.taskId)
 
               console.log("[v0] Retrying with new profile...")
@@ -197,7 +191,7 @@ export class KameleoAccountCreator {
         await this.verificationHandler.finishOrder(orderId)
       }
       // Update task as completed
-      await supabase
+      await (supabase as any)
         .from("kameleo_account_tasks")
         .update({
           status: "completed",
@@ -209,7 +203,7 @@ export class KameleoAccountCreator {
           phone: phone,
           recovery_email: accountData.recoveryEmail,
           completed_at: new Date().toISOString(),
-        } as any)
+        })
         .eq("id", options.taskId)
 
       await this.webDriverController.close()
@@ -266,13 +260,14 @@ export class KameleoAccountCreator {
         .eq("id", options.taskId)
         .single()
 
-      await supabase
+      const retryCount = (currentTask as any)?.retry_count || 0
+      await (supabase as any)
         .from("kameleo_account_tasks")
         .update({
           status: "failed",
           error_message: errorMessage,
-          retry_count: (currentTask?.retry_count ? Number(currentTask.retry_count) : 0) + 1,
-        } as any)
+          retry_count: retryCount + 1,
+        })
         .eq("id", options.taskId)
 
       try {

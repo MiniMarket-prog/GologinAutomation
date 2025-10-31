@@ -27,6 +27,7 @@ const navItems = [
   { href: "/dashboard/proxies", label: "Proxies", icon: Globe },
   { href: "/dashboard/account-creator", label: "Account Creator", icon: UserPlus },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard/kameleo-profiles", label: "kameleo profiles", icon: Users },
 ]
 
 export function DashboardNav() {

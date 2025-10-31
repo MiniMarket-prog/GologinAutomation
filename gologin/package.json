@@ -65,7 +65,8 @@
     "fs": "0.0.1-security",
     "path": "0.12.7",
     "@supabase/ssr": "0.7.0",
-    "selenium-webdriver": "4.38.0"
+    "selenium-webdriver": "4.38.0",
+    "swr": "2.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",

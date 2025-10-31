@@ -1,10 +1,10 @@
-import { createServerClient as createSupabaseServerClient } from "@supabase/ssr"
+import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 
-export async function createServerClient() {
+export async function getSupabaseServerClient() {
   const cookieStore = await cookies()
 
-  return createSupabaseServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+  return createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookies: {
       getAll() {
         return cookieStore.getAll()
@@ -20,21 +20,5 @@ export async function createServerClient() {
   })
 }
 
-export async function getSupabaseServerClient() {
-  return createServerClient()
-}
-
-export function getSupabaseServiceClient() {
-  return createSupabaseServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-    cookies: {
-      getAll() {
-        return []
-      },
-      setAll() {
-        // No-op for service role client
-      },
-    },
-  })
-}
-
 export const createClient = getSupabaseServerClient
+export { getSupabaseServerClient as createServerClient }

@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "./types"
 
+
 let adminClient: SupabaseClient<Database> | null = null
 
 export function getSupabaseAdminClient(): SupabaseClient<Database> {

@@ -540,20 +540,27 @@ export class GmailAutomationWebDriver {
    */
   async checkForBotDetection(): Promise<{ detected: boolean; type?: string }> {
     try {
+      // Check for QR code verification
       try {
         await this.driver.findElement(By.css('img[alt*="QR"]'))
         return { detected: true, type: "qr_code" }
-      } catch (e) {}
+      } catch (e) {
+        // QR code not found, continue checking
+      }
 
+      // Check for specific bot detection messages
       const bodyText = await this.driver.findElement(By.tagName("body")).getText()
-      const suspiciousText = bodyText.toLowerCase()
+      const lowerText = bodyText.toLowerCase()
 
+      // Only detect actual bot detection scenarios, not normal phone verification
       if (
-        suspiciousText.includes("suspicious") ||
-        suspiciousText.includes("unusual activity") ||
-        suspiciousText.includes("verify")
+        lowerText.includes("verify some info before creating an account") ||
+        lowerText.includes("scan the qr code") ||
+        lowerText.includes("preventing abuse from computer programs or bots") ||
+        lowerText.includes("verify some info about your device") ||
+        lowerText.includes("couldn't create your google account")
       ) {
-        return { detected: true, type: "suspicious_activity" }
+        return { detected: true, type: "bot_detection" }
       }
 
       return { detected: false }
@@ -597,7 +604,10 @@ export class GmailAutomationWebDriver {
         element,
         char,
       )
-      await randomDelay(50, 150)
+      // Variable typing speed - slower for numbers and special characters
+      const isSpecialChar = /[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(char)
+      const delay = isSpecialChar ? randomDelay(100, 200) : randomDelay(50, 150)
+      await delay
     }
   }
 

@@ -96,6 +96,9 @@ export default function KameleoAccountsPage() {
   const [proxyId, setProxyId] = useState<string>("none")
   const [recoveryEmails, setRecoveryEmails] = useState<string>("")
 
+  const [pollingInterval, setPollingInterval] = useState<number>(15000) // Start with 15 seconds
+  const [lastFetchTime, setLastFetchTime] = useState<number>(0)
+
   const refreshSession = async () => {
     try {
       const supabase = getSupabaseBrowserClient()
@@ -115,6 +118,19 @@ export default function KameleoAccountsPage() {
     try {
       const response = await fetch(url, options)
 
+      // Handle rate limiting with exponential backoff
+      if (response.status === 429) {
+        const newInterval = Math.min(pollingInterval * 2, 60000) // Max 60 seconds
+        setPollingInterval(newInterval)
+        console.warn(`[v0] Rate limit hit, increasing polling interval to ${newInterval}ms`)
+        toast({
+          title: "Rate Limit",
+          description: "Slowing down requests to avoid rate limiting",
+          variant: "default",
+        })
+        throw new Error("Rate limit reached")
+      }
+
       // If 401, try to refresh session and retry once
       if (response.status === 401 && retries > 0) {
         console.log("[v0] Got 401, attempting to refresh session...")
@@ -123,6 +139,11 @@ export default function KameleoAccountsPage() {
           console.log("[v0] Session refreshed, retrying request...")
           return fetchWithRetry(url, options, retries - 1)
         }
+      }
+
+      if (response.ok && pollingInterval > 15000) {
+        const newInterval = Math.max(pollingInterval * 0.8, 15000) // Min 15 seconds
+        setPollingInterval(newInterval)
       }
 
       return response
@@ -191,11 +212,21 @@ export default function KameleoAccountsPage() {
   }
 
   const fetchTasks = async () => {
+    const now = Date.now()
+    if (now - lastFetchTime < 5000) {
+      return // Don't fetch more than once every 5 seconds
+    }
+    setLastFetchTime(now)
+
     try {
       const response = await fetchWithRetry("/api/kameleo-accounts/tasks")
       if (!response.ok) {
         if (response.status === 401) {
           console.warn("[v0] Session expired, tasks not loaded")
+          return
+        }
+        if (response.status === 429) {
+          // Rate limit handled in fetchWithRetry
           return
         }
         throw new Error("Failed to fetch tasks")
@@ -217,9 +248,17 @@ export default function KameleoAccountsPage() {
     fetchTasks()
     fetchProxies()
     fetchKameleoProfiles()
-    const interval = setInterval(fetchTasks, 5000)
+
+    // Only poll if there are active tasks (pending or processing)
+    const interval = setInterval(() => {
+      // Check if there are any active tasks before polling
+      if (stats.pending > 0 || stats.processing > 0) {
+        fetchTasks()
+      }
+    }, pollingInterval)
+
     return () => clearInterval(interval)
-  }, [])
+  }, [pollingInterval, stats.pending, stats.processing])
 
   const handleCreateTasks = async () => {
     if (!profileId) {
